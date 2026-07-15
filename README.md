@@ -2,7 +2,7 @@
 
 A prebuilt, Git-connected Cloudflare Worker deployment of FeatherBench. Link a **private GitHub repository** in the Cloudflare dashboard, deploy, set one secret, and give models `/agent.md`.
 
-The bundled private bank contains 352 hard questions across eleven categories. Seven saturated categories were removed; four verifier-asymmetric search tasks were added: max-flow with a min-cut certificate, Game-of-Life preimage, BFS-optimal sliding puzzle, and planted Boolean-circuit inversion. Existing hard tracks cover temporal replay, constrained routing, compound instruction following, transformed occupancy, all-piece packing, cube-net folding, and legal 3×3 Rubik's Cube solving. Each run receives a random subset and signed four-hour token; keys remain inside the private Worker bundle.
+The bundled private bank contains 384 hard questions across twelve categories. Seven saturated categories were removed; four verifier-asymmetric search tasks were added: max-flow with a min-cut certificate, Game-of-Life preimage, BFS-optimal sliding puzzle, and planted Boolean-circuit inversion. Existing hard tracks cover temporal replay, constrained routing, compound instruction following, transformed occupancy, all-piece packing, cube-net folding, and legal 3×3 Rubik's Cube solving. Each run receives a random subset and signed four-hour token; keys remain inside the private Worker bundle.
 
 ## Critical privacy rule
 
@@ -114,10 +114,10 @@ Profiles select a random number of bank items per category:
 
 | Profile | Per category | Total |
 |---|---:|---:|
-| smoke | 2 | 22 |
-| quick | 4 | 44 |
-| standard | 16 | 176 |
-| full | 32 | 352 |
+| smoke | 2 | 24 |
+| quick | 4 | 48 |
+| standard | 16 | 192 |
+| full | 32 | 384 |
 
 ## One check, one final submission
 
@@ -144,13 +144,14 @@ Rubik items execute the submitted Singmaster moves against the scrambled cube. A
 ## Visual and cube premises
 
 - `visual_fit`: choose one alternative piece and transform it to cover the target. The scorer applies the transform and compares occupancy, avoiding 90°/270° naming-key bugs.
-- `visual_packing`: use every piece exactly once to tile the target with no gaps, overlap, or out-of-bounds cells.
+- `visual_packing`: choose the unique subset from required pieces plus decoys, then tile the irregular target with no gaps, overlap, or out-of-bounds cells. A private exact-cover search rejects non-unique instances.
 - `cube_net`: fold the labeled 2D net and return the three opposite-face pairs.
-- `rubiks_cube`: solve a legal scrambled 3×3 state supplied as six U,R,F,D,L,B matrices.
+- `rubiks_cube`: solve a legal scrambled 5×5 state supplied as six U,R,F,D,L,B matrices; outer and two-layer wide moves are supported, with 14–30 move scrambles.
 - `max_flow`: submit a feasible per-edge flow plus a min-cut certificate; full credit requires matching primal and dual values.
 - `life_preimage`: find any grid that evolves to the published state after the specified Life steps; grading is exact simulation.
 - `sliding_puzzle`: submit a valid solution, scored against a certified BFS optimum.
 - `circuit_inversion`: find any input satisfying a planted layered Boolean circuit output; grading is one circuit evaluation.
+- `chess`: rank three quiet candidate moves and predict a three-ply principal variation from a pinned Stockfish 17.1/80k-node private reference. This is explicitly a closed-book track; engine-assisted results must be reported separately.
 
 Public task payloads no longer expose difficulty labels.
 
