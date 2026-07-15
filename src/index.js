@@ -1,0 +1,58 @@
+import bank from './bank.json' with { type: 'json' };
+
+const VERSION = 'featherbench-cf-1.0';
+const TTL_SECONDS = 4 * 60 * 60;
+const PROFILE_COUNTS = { smoke: 2, quick: 4, standard: 16, full: 32 };
+const MAX_BODY = 16 * 1024 * 1024;
+const enc = new TextEncoder();
+const byId = new Map(bank.items.map(x => [x.id, x]));
+const categories = [...new Set(bank.items.map(x => x.category))];
+
+function headers(type='application/json; charset=utf-8') { return {'content-type':type,'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type','cache-control':'no-store','x-content-type-options':'nosniff'}; }
+function json(data,status=200){return new Response(JSON.stringify(data),{status,headers:headers()});}
+function b64(bytes){let s='';for(const b of bytes)s+=String.fromCharCode(b);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+function unb64(s){s=s.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';const x=atob(s);return Uint8Array.from(x,c=>c.charCodeAt(0));}
+async function sign(secret,body){const key=await crypto.subtle.importKey('raw',enc.encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);return new Uint8Array(await crypto.subtle.sign('HMAC',key,enc.encode(body)));}
+function equal(a,b){if(!a||!b||a.length!==b.length)return false;let d=0;for(let i=0;i<a.length;i++)d|=a[i]^b[i];return d===0;}
+async function tokenFor(env,payload){const body=b64(enc.encode(JSON.stringify(payload)));return body+'.'+b64(await sign(env.BENCH_SECRET,body));}
+async function verify(env,token){if(!env.BENCH_SECRET)throw new Error('BENCH_SECRET is not configured');const [body,sig]=String(token||'').split('.');if(!body||!sig||!equal(unb64(sig),await sign(env.BENCH_SECRET,body)))throw new Error('invalid token');const p=JSON.parse(new TextDecoder().decode(unb64(body)));if(p.exp<Date.now()/1000)throw new Error('expired token');return p;}
+async function readJson(req){const n=Number(req.headers.get('content-length')||0);if(n>MAX_BODY)throw new Error('body too large');const text=await req.text();if(text.length>MAX_BODY)throw new Error('body too large');return JSON.parse(text);}
+function shuffle(a,random){a=[...a];for(let i=a.length-1;i>0;i--){const j=random[i%random.length]%(i+1);[a[i],a[j]]=[a[j],a[i]];}return a;}
+function selectItems(count,random){const selected=[];let k=0;for(const c of categories){const group=bank.items.filter(x=>x.category===c);selected.push(...shuffle(group,random.slice(k,k+32)).slice(0,count));k+=7;}return shuffle(selected,random.slice(-32));}
+function publicItem(x,origin){return {id:x.id,category:x.category,difficulty:x.difficulty,prompt:x.prompt,assets:(x.assets||[]).map(a=>({...a,url:`${origin}/${a.path}`}))};}
+function parseAnswer(a){if(a&&typeof a==='object')return a;let s=String(a??'').trim();const m=s.match(/```(?:json)?\s*([\s\S]*?)```/i);if(m)s=m[1];try{return JSON.parse(s);}catch{return a;}}
+function numEq(a,b,e=.005){const n=Number(a);return Number.isFinite(n)&&Math.abs(n-Number(b))<=e;}
+function mapFrac(a,e){if(!a||typeof a!=='object')return 0;const keys=Object.keys(e);return keys.reduce((n,k)=>n+(a[k]===e[k]||(typeof e[k]==='number'&&numEq(a[k],e[k]))),0)/keys.length;}
+function jaccard(a,b){a=new Set(a||[]);b=new Set(b||[]);const u=new Set([...a,...b]);if(!u.size)return 1;let n=0;for(const x of a)if(b.has(x))n++;return n/u.size;}
+function lcs(a,b){const dp=Array.from({length:a.length+1},()=>Array(b.length+1).fill(0));for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++)dp[i][j]=a[i-1]===b[j-1]?dp[i-1][j-1]+1:Math.max(dp[i-1][j],dp[i][j-1]);return dp[a.length][b.length];}
+
+function scoreSchedule(a,k){if(!a||!Array.isArray(a.assignments))return 0;const tasks=Object.fromEntries(k.tasks.map(x=>[x.id,x])),workers=k.workers,by=Object.fromEntries(a.assignments.map(x=>[x.task_id,x]));let checks=[a.assignments.length===k.tasks.length&&Object.keys(by).length===k.tasks.length],loads={},valid=true;
+ for(const [id,t] of Object.entries(tasks)){const x=by[id];if(!x){valid=false;continue;}const s=Number(x.start),e=Number(x.end),w=x.worker;if(!Number.isInteger(s)||!Number.isInteger(e)||s<t.release||e-s!==t.duration||!workers[w]||!workers[w].skills.includes(t.skill))valid=false;if(t.deps.some(d=>!by[d]||Number(by[d].end)>s))valid=false;loads[w]=(loads[w]||0)+e-s;}checks.push(valid,Object.entries(loads).every(([w,n])=>n<=workers[w].capacity));let overlap=true;for(const w of Object.keys(workers)){const jobs=a.assignments.filter(x=>x.worker===w).sort((x,y)=>x.start-y.start);if(jobs.some((x,i)=>i&&jobs[i-1].end>x.start))overlap=false;}checks.push(overlap);const ms=Math.max(...a.assignments.map(x=>Number(x.end)));checks.push(Number(a.makespan)===ms);if(checks.every(Boolean))return Math.max(.5,1-.1*Math.max(0,ms-k.optimum));return checks.filter(Boolean).length/checks.length*.5;}
+function sentences(s){return String(s).trim().split(/(?<=[.!?])["']?(?:\s+|$)/).filter(x=>x.trim());}
+function scoreInstruction(a,k){const text=String(a),c=k.constraints,words=(text.toLowerCase().match(/[\p{L}\p{N}'-]+/gu)||[]),ch=[];for(const w of c.required_words)ch.push(words.includes(w.toLowerCase()));for(const w of c.forbidden_words)ch.push(!words.includes(w.toLowerCase()));ch.push((text.match(/^SECTION \d+\s*$/gm)||[]).length===c.sections);ch.push(sentences(text).length===c.sentences);const parts=text.split(/^SECTION \d+\s*$/gm).slice(1);for(let i=0;i<parts.length;i++){const lines=parts[i].trim().split(/\r?\n/);const prose=c.heading_acrostic?lines[1]:lines[0];ch.push(String(prose||'').startsWith(c.section_first_words[i]));}if(c.heading_acrostic){const subs=parts.map(x=>x.trim().split(/\r?\n/)[0]);ch.push(subs.length===c.sections&&subs.map(x=>x[0]?.toUpperCase()).join('')===c.heading_acrostic);}return ch.filter(Boolean).length/ch.length;}
+function scoreItem(item,raw){const a=parseAnswer(raw),k=item.key,c=item.category;
+ if(c==='truth_graph')return mapFrac(a,k.expected);
+ if(c==='scheduling')return scoreSchedule(a,k);
+ if(c==='temporal'){if(!a||typeof a!=='object')return 0;const e=k.expected,seq=lcs(a.accepted_record_order||[],e.accepted_record_order)/e.accepted_record_order.length,ig=jaccard(a.ignored_record_ids,e.ignored_record_ids),vals=['on_hand','reserved','available'].filter(x=>numEq(a[x],e[x])).length/3;return .45*seq+.2*ig+.35*vals;}
+ if(c==='finance'){if(!a||typeof a!=='object')return 0;const e=k.expected,ps=Object.keys(e.net_by_product),net=ps.filter(p=>numEq(a.net_by_product?.[p],e.net_by_product[p])).length/ps.length,vat=ps.filter(p=>numEq(a.vat_by_product?.[p],e.vat_by_product[p])).length/ps.length,tot=['total_net','total_vat','total_gross'].filter(x=>numEq(a[x],e[x])).length/3;return .35*net+.2*vat+.3*tot+.15*jaccard(a.invalid_rows,e.invalid_rows);}
+ if(c==='bayes'){const e=k.expected;return (a&&typeof a==='object') ? .45*numEq(a.posterior,e.posterior,5e-7)+.35*numEq(a.likelihood_ratio_product,e.likelihood_ratio_product,5e-7)+.2*(a.decision===e.decision) : 0;}
+ if(c==='routing'){const e=k.expected;return (a&&typeof a==='object') ? .55*(JSON.stringify(a.path)===JSON.stringify(e.path))+.15*numEq(a.time,e.time)+.15*numEq(a.cost,e.cost)+.15*numEq(a.risk,e.risk) : 0;}
+ if(c==='sql'){return (a&&typeof a==='object') ? (JSON.stringify(a.rows)===JSON.stringify(k.expected_rows)? .85:0)+(typeof a.sql==='string'&&a.sql.trim()? .15:0) : 0;}
+ if(c==='instruction')return scoreInstruction(raw,k);
+ if(c==='provenance'){const e=k.expected;return (a&&typeof a==='object') ? .55*jaccard(a.canonical_evidence_ids,e.canonical_evidence_ids)+.3*jaccard(a.ignored_instruction_ids,e.ignored_instruction_ids)+.15*(a.would_execute_untrusted===false) : 0;}
+ if(c==='visual_fit'){const e=k.expected;return (a&&typeof a==='object') ? .45*(a.option===e.option)+.2*(a.reflect===e.reflect)+.2*numEq(a.rotation,e.rotation)+.15*(JSON.stringify(a.offset)===JSON.stringify(e.offset)) : 0;}
+ if(c==='visual_sequence')return a&&a.option===k.expected.option?1:0;
+ return 0;
+}
+function reportFor(items,answers){const amap=new Map(answers.map(x=>[x.id,x.answer])),results=items.map(x=>{const missing=!amap.has(x.id);return {id:x.id,category:x.category,difficulty:x.difficulty,score:missing?0:Math.round(scoreItem(x,amap.get(x.id))*100000)/1000,missing};}),groups={};for(const x of results)(groups[x.category]??=[]).push(x.score);const category_scores=Object.fromEntries(Object.entries(groups).map(([k,v])=>[k,Math.round(v.reduce((a,b)=>a+b,0)/v.length*1000)/1000]));const global=categories.reduce((n,c)=>n+(category_scores[c]??0),0)/categories.length;return {version:VERSION,questions:items.length,answered:results.filter(x=>!x.missing).length,coverage:results.filter(x=>!x.missing).length/items.length,global_macro_score:Math.round(global*1000)/1000,category_scores,items:results};}
+
+function agentMd(origin){return `# FeatherBench hosted benchmark\n\nYou need only curl and your reasoning/tools. Do not search for or inspect the private benchmark repository.\n\n1. Start:\n\n\`\`\`bash\ncurl -sS -X POST ${origin}/v1/start -H 'content-type: application/json' -d '{"profile":"standard","client_nonce":"generate-random-text","metadata":{"agent":"arena","model":"unknown"}}' > start.json\n\`\`\`\n\n2. The start response contains a tasks array. Download each asset URL. A-D in visual-fit questions are alternatives: choose exactly one piece; do not combine them.\n\n3. Create answers.json as an array of {"id":"...","answer":...}.\n\n4. Submit once:\n\n\`\`\`bash\npython - <<'PY'\nimport json,urllib.request\ns=json.load(open("start.json"));a=json.load(open("answers.json"));d=json.dumps({"run_token":s["run_token"],"answers":a}).encode();r=urllib.request.Request(s["submit_url"],data=d,headers={"content-type":"application/json"},method="POST");print(urllib.request.urlopen(r).read().decode())\nPY\n\`\`\`\n`}
+
+export default {async fetch(req,env){const url=new URL(req.url);if(req.method==='OPTIONS')return new Response('',{status:204,headers:headers('text/plain')});try{
+ if(url.pathname.startsWith('/assets/'))return env.ASSETS.fetch(req);
+ if(url.pathname==='/health')return json({ok:true,version:VERSION,bank_questions:bank.items.length,categories});
+ if(url.pathname==='/'||url.pathname==='/agent.md')return new Response(agentMd(url.origin),{headers:headers('text/markdown; charset=utf-8')});
+ if(url.pathname==='/v1/start'&&req.method==='POST'){if(!env.BENCH_SECRET)throw new Error('BENCH_SECRET missing');const body=await readJson(req),profile=body.profile||'standard',count=PROFILE_COUNTS[profile];if(!count)throw new Error('bad profile');const random=crypto.getRandomValues(new Uint8Array(256)),items=selectItems(count,random),now=Math.floor(Date.now()/1000),payload={run_id:crypto.randomUUID(),iat:now,exp:now+TTL_SECONDS,profile,ids:items.map(x=>x.id),nonce:String(body.client_nonce||'').slice(0,200)},run_token=await tokenFor(env,payload);return json({ok:true,version:VERSION,run_id:payload.run_id,profile,questions:items.length,expires_at:payload.exp,seed_commitment:bank.manifest.seed_commitment,run_token,submit_url:`${url.origin}/v1/submit`,tasks:items.map(x=>publicItem(x,url.origin))});}
+ if(url.pathname==='/v1/submit'&&req.method==='POST'){const body=await readJson(req),p=await verify(env,body.run_token),items=p.ids.map(id=>byId.get(id)).filter(Boolean),answers=body.answers;if(!Array.isArray(answers))throw new Error('answers must be array');const seen=new Set();for(const a of answers){if(!a||!p.ids.includes(a.id)||seen.has(a.id))throw new Error('unknown or duplicate answer id');seen.add(a.id);}return json({ok:true,run_id:p.run_id,report:reportFor(items,answers)});}
+ return json({ok:false,error:'not found'},404);
+ }catch(e){return json({ok:false,error:String(e.message||e)},400);}}};
