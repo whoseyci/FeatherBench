@@ -1,4 +1,0 @@
-SOURCE: authenticated_email
-DOCUMENT-ID: E3L
-SUBJECT: inspection_frequency
-VALUE: V40

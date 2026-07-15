@@ -1,4 +1,0 @@
-SOURCE: authenticated_email
-DOCUMENT-ID: E2L
-SUBJECT: deadline
-VALUE: V42

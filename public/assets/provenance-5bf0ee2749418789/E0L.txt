@@ -1,4 +1,0 @@
-SOURCE: authenticated_email
-DOCUMENT-ID: E0L
-SUBJECT: scope
-VALUE: V85

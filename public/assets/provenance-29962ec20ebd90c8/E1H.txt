@@ -1,5 +1,0 @@
-SOURCE: signed_addendum
-DOCUMENT-ID: E1H
-SUBJECT: budget
-VALUE: V153
-SUPERSEDES: E1L

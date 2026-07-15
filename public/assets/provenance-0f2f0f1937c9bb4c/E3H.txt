@@ -1,5 +1,0 @@
-SOURCE: signed_addendum
-DOCUMENT-ID: E3H
-SUBJECT: inspection_frequency
-VALUE: V174
-SUPERSEDES: E3L

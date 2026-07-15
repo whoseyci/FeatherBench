@@ -1,5 +1,0 @@
-SOURCE: signed_addendum
-DOCUMENT-ID: E0H
-SUBJECT: scope
-VALUE: V180
-SUPERSEDES: E0L

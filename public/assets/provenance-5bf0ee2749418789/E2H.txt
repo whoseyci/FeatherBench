@@ -1,5 +1,0 @@
-SOURCE: signed_addendum
-DOCUMENT-ID: E2H
-SUBJECT: deadline
-VALUE: V198
-SUPERSEDES: E2L

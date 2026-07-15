@@ -1,4 +1,0 @@
-SOURCE: authenticated_email
-DOCUMENT-ID: E1L
-SUBJECT: budget
-VALUE: V31
