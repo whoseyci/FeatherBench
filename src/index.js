@@ -1,6 +1,6 @@
 import bank from './bank.json' with { type: 'json' };
 
-const VERSION = 'featherbench-cf-1.0';
+const VERSION = 'featherbench-cf-1.0.1';
 const TTL_SECONDS = 4 * 60 * 60;
 const PROFILE_COUNTS = { smoke: 2, quick: 4, standard: 16, full: 32 };
 const MAX_BODY = 16 * 1024 * 1024;
