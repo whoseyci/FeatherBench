@@ -2,7 +2,7 @@
 
 A prebuilt, Git-connected Cloudflare Worker deployment of FeatherBench. Link a **private GitHub repository** in the Cloudflare dashboard, deploy, set one secret, and give models `/agent.md`.
 
-The bundled private bank contains 384 hard questions across twelve categories. Seven saturated categories were removed; four verifier-asymmetric search tasks were added: max-flow with a min-cut certificate, Game-of-Life preimage, BFS-optimal sliding puzzle, and planted Boolean-circuit inversion. Existing hard tracks cover temporal replay, constrained routing, compound instruction following, transformed occupancy, all-piece packing, cube-net folding, and legal 3×3 Rubik's Cube solving. Each run receives a random subset and signed four-hour token; keys remain inside the private Worker bundle.
+The bundled private bank contains 480 hard questions across fifteen categories. Seven saturated categories were removed; four verifier-asymmetric search tasks were added: max-flow with a min-cut certificate, Game-of-Life preimage, BFS-optimal sliding puzzle, and planted Boolean-circuit inversion. Existing hard tracks cover temporal replay, constrained routing, compound instruction following, transformed occupancy, all-piece packing, cube-net folding, and legal 3×3 Rubik's Cube solving. Each run receives a random subset and signed four-hour token; keys remain inside the private Worker bundle.
 
 ## Critical privacy rule
 
@@ -114,10 +114,10 @@ Profiles select a random number of bank items per category:
 
 | Profile | Per category | Total |
 |---|---:|---:|
-| smoke | 2 | 24 |
-| quick | 4 | 48 |
-| standard | 16 | 192 |
-| full | 32 | 384 |
+| smoke | 2 | 30 |
+| quick | 4 | 60 |
+| standard | 16 | 240 |
+| full | 32 | 480 |
 
 ## One check, one final submission
 
@@ -152,6 +152,10 @@ Rubik items execute the submitted Singmaster moves against the scrambled cube. A
 - `sliding_puzzle`: submit a valid solution, scored against a certified BFS optimum.
 - `circuit_inversion`: find any input satisfying a planted layered Boolean circuit output; grading is one circuit evaluation.
 - `chess`: rank three quiet candidate moves and predict a three-ply principal variation from a pinned Stockfish 17.1/80k-node private reference. This is explicitly a closed-book track; engine-assisted results must be reported separately.
+- `maker_breaker`: recover any perfect pairing whose pairs hit every winning hyperedge, certifying a Breaker strategy.
+- `tiling_invariant`: produce a periodic integer weighting whose translated tile weights vanish while the enormous board has nonzero weight.
+- `sequence_induction`: predict 128 exact terms from private mixed DFAO, interleaved-recurrence, and morphism families.
+- `coloring_certificate`: submit both a proper k-coloring and a k-clique, giving valid upper/lower certificates. This deliberately uses a clique subgraph—not the invalid clique-minor argument.
 
 Public task payloads no longer expose difficulty labels.
 

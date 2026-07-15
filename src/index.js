@@ -1,6 +1,6 @@
 import bank from './bank.json' with { type: 'json' };
 
-const VERSION = 'featherbench-cf-3.2';
+const VERSION = 'featherbench-cf-4.0';
 const TTL_SECONDS = 4 * 60 * 60;
 const PROFILE_COUNTS = { smoke: 2, quick: 4, standard: 16, full: 32 };
 const MAX_BODY = 16 * 1024 * 1024;
@@ -48,6 +48,10 @@ function life(a,k){let g=a?.preimage;if(!Array.isArray(g)||g.length!==k.size||g.
 function sliding(a,k){const m=a?.moves;if(typeof m!=='string'||!/^[UDLR]*$/.test(m)||m.length>200)return 0;const s=[...k.state],delta={U:-3,D:3,L:-1,R:1};for(const ch of m){const z=s.indexOf(0),c=z%3,n=z+delta[ch];if(n<0||n>=9||(ch==='L'&&c===0)||(ch==='R'&&c===2))return 0;[s[z],s[n]]=[s[n],s[z]];}if(JSON.stringify(s)!==JSON.stringify([1,2,3,4,5,6,7,8,0]))return 0;return Math.min(1,k.optimum/Math.max(1,m.length));}
 function circuit(a,k){const bits=a?.input_bits;if(typeof bits!=='string'||bits.length!==k.n||!/^[01]+$/.test(bits))return 0;const w=[...bits].map(Number);for(const g of k.gates){const x=w[g.a];w.push(g.op==='NOT'?1-x:g.op==='XOR'?x^w[g.b]:g.op==='AND'?x&w[g.b]:x|w[g.b]);}return w.slice(-16).join('')===k.target?1:0;}
 function chessScore(a,k){if(!a||!Array.isArray(a.candidates)||!Array.isArray(a.pv))return 0;const rel=new Map(k.candidates.map((m,i)=>[m,3-i])),dcg=xs=>xs.slice(0,3).reduce((n,m,i)=>n+(Math.pow(2,rel.get(String(m))||0)-1)/Math.log2(i+2),0),ndcg=dcg(a.candidates)/dcg(k.candidates),pv=k.pv.reduce((n,m,i)=>n+(String(a.pv[i])===m),0)/Math.max(1,k.pv.length);return .65*ndcg+.35*pv;}
+function maker(a,k){if(!a||!Array.isArray(a.pairs)||a.pairs.some(p=>!Array.isArray(p)||p.length!==2||p[0]===p[1]))return 0;const flat=a.pairs.flat().map(String);if(flat.length!==k.elements.length||new Set(flat).size!==k.elements.length||flat.some(x=>!k.elements.includes(x)))return 0;const ps=a.pairs.map(p=>new Set(p.map(String)));return k.edges.every(e=>{const s=new Set(e);return ps.some(p=>[...p].every(x=>s.has(x)))} )?1:0;}
+function tiling(a,k){if(!a||!Array.isArray(a.period)||!Array.isArray(a.weights))return 0;const [p,q]=a.period.map(Number),w=a.weights;if(!(p>=1&&q>=1&&p<=k.max_period&&q<=k.max_period)||w.length!==p||w.some(r=>!Array.isArray(r)||r.length!==q||r.some(x=>!Number.isInteger(x)||Math.abs(x)>100)))return 0;for(const shape of k.shapes)for(let dr=0;dr<p;dr++)for(let dc=0;dc<q;dc++)if(shape.reduce((n,[r,c])=>n+w[(r+dr)%p][(c+dc)%q],0)!==0)return 0;const [H,W]=k.board;let total=0;for(let r=0;r<p;r++)for(let c=0;c<q;c++)total+=w[r][c]*(r<H?Math.floor((H-1-r)/p)+1:0)*(c<W?Math.floor((W-1-c)/q)+1:0);return total!==0?1:0;}
+function sequenceScore(a,k){return a&&Array.isArray(a.next)&&JSON.stringify(a.next)===JSON.stringify(k.expected)?1:0;}
+function coloring(a,k){if(!a||!Array.isArray(a.colors)||!Array.isArray(a.clique)||a.k!==k.optimum||a.colors.length!==k.vertices||new Set(a.colors).size>a.k)return 0;const es=new Set(k.edges.map(e=>e[0]+','+e[1]));if(k.edges.some(([u,v])=>a.colors[u]===a.colors[v]))return 0;if(a.clique.length!==a.k||new Set(a.clique).size!==a.k||a.clique.some(v=>v<0||v>=k.vertices))return 0;for(let i=0;i<a.k;i++)for(let j=i+1;j<a.k;j++){const u=Math.min(a.clique[i],a.clique[j]),v=Math.max(a.clique[i],a.clique[j]);if(!es.has(u+','+v))return 0;}return 1;}
 function scoreItem(item,raw){const a=parseAnswer(raw),k=item.key,c=item.category;
  if(c==='truth_graph')return mapFrac(a,k.expected);
  if(c==='scheduling')return scoreSchedule(a,k);
@@ -67,6 +71,10 @@ function scoreItem(item,raw){const a=parseAnswer(raw),k=item.key,c=item.category
  if(c==='sliding_puzzle')return sliding(a,k);
  if(c==='circuit_inversion')return circuit(a,k);
  if(c==='chess')return chessScore(a,k);
+ if(c==='maker_breaker')return maker(a,k);
+ if(c==='tiling_invariant')return tiling(a,k);
+ if(c==='sequence_induction')return sequenceScore(a,k);
+ if(c==='coloring_certificate')return coloring(a,k);
  return 0;
 }
 function reportFor(items,answers,elapsedSeconds=null,profile='standard'){const amap=new Map(answers.map(x=>[x.id,x.answer])),results=items.map(x=>{const missing=!amap.has(x.id);return {id:x.id,category:x.category,difficulty:x.difficulty,score:missing?0:Math.round(scoreItem(x,amap.get(x.id))*100000)/1000,missing};}),groups={};for(const x of results)(groups[x.category]??=[]).push(x.score);const category_scores=Object.fromEntries(Object.entries(groups).map(([k,v])=>[k,Math.round(v.reduce((a,b)=>a+b,0)/v.length*1000)/1000]));const global=categories.reduce((n,c)=>n+(category_scores[c]??0),0)/categories.length,budgets={smoke:300,quick:900,standard:3600,full:10800},speed=elapsedSeconds==null?null:100/(1+elapsedSeconds/(budgets[profile]||3600)),coverage=results.filter(x=>!x.missing).length/items.length,performance=speed==null?null:.9*global+.1*speed*coverage;return {version:VERSION,questions:items.length,answered:results.filter(x=>!x.missing).length,coverage,global_macro_score:Math.round(global*1000)/1000,wall_clock_seconds:elapsedSeconds,speed_score:speed==null?null:Math.round(speed*1000)/1000,performance_score:performance==null?null:Math.round(performance*1000)/1000,category_scores,items:results};}
