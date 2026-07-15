@@ -2,7 +2,7 @@
 
 A prebuilt, Git-connected Cloudflare Worker deployment of FeatherBench. Link a **private GitHub repository** in the Cloudflare dashboard, deploy, set one secret, and give models `/agent.md`.
 
-The bundled private bank contains 352 questions across 11 categories, including PNG visual-fit and visual-sequence puzzles. Each run receives a cryptographically random subset and a signed four-hour token. Models see tasks and public assets only; scoring keys remain inside the Worker bundle.
+The bundled private bank contains 224 hard questions across seven calibrated categories: temporal replay, constrained routing, compound instruction following, transformed-occupancy visual fit, all-piece visual packing, cube-net folding, and legal 3×3 Rubik's Cube solving. Seven categories that scored 100% across every calibration run were removed. Each run receives a cryptographically random subset and a signed four-hour token; keys remain inside the private Worker bundle.
 
 ## Critical privacy rule
 
@@ -114,10 +114,10 @@ Profiles select a random number of bank items per category:
 
 | Profile | Per category | Total |
 |---|---:|---:|
-| smoke | 2 | 22 |
-| quick | 4 | 44 |
-| standard | 16 | 176 |
-| full | 32 | 352 |
+| smoke | 2 | 14 |
+| quick | 4 | 28 |
+| standard | 16 | 112 |
+| full | 32 | 224 |
 
 ## Stateless design
 
@@ -130,20 +130,22 @@ The Worker stores no run database. The signed token contains the selected item I
 
 A token can technically be submitted more than once because there is no state store. For strict one-attempt tournaments, add a Durable Object or KV-backed replay registry. Ordinary model comparisons can simply retain the first returned report.
 
-## Scoring difference from local FeatherBench
+## Correctness, speed and move efficiency
 
-Cloudflare Workers cannot run SQLite safely in the same way as the local Python scorer. The Cloudflare SQL category therefore scores:
+The report returns three headline metrics:
 
-- 85% for the exact result rows;
-- 15% for supplying a non-empty SQL query.
+- `global_macro_score`: objective correctness, equally weighted by category;
+- `speed_score`: start-to-submit wall-clock score normalized by profile;
+- `performance_score`: 90% correctness plus 10% speed.
 
-All other categories preserve the local objective/partial-credit behavior.
+Rubik items additionally execute the submitted Singmaster moves against the scrambled cube. A solved cube earns at least 85%; the final 15% rewards move count relative to the known inverse scramble. Any shorter valid solution receives full efficiency credit.
 
-## Visual puzzle premise
+## Visual and cube premises
 
-In `visual_fit`, A–D are alternative **single pieces**. Exactly one can be reflected/rotated/translated to cover all and only the shaded target Y cells. The candidates are not combined, and the rest of the grid remains empty.
-
-`visual_sequence` is separate: infer the repeated rigid transformation and choose frame four.
+- `visual_fit`: choose one alternative piece and transform it to cover the target. The scorer applies the transform and compares occupancy, avoiding 90°/270° naming-key bugs.
+- `visual_packing`: use every piece exactly once to tile the target with no gaps, overlap, or out-of-bounds cells.
+- `cube_net`: fold the labeled 2D net and return the three opposite-face pairs.
+- `rubiks_cube`: solve a legal scrambled 3×3 state supplied as six U,R,F,D,L,B matrices.
 
 ## Automatic deployments
 
