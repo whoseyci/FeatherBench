@@ -2,7 +2,7 @@
 
 A prebuilt, Git-connected Cloudflare Worker deployment of FeatherBench. Link a **private GitHub repository** in the Cloudflare dashboard, deploy, set one secret, and give models `/agent.md`.
 
-The bundled private bank contains 224 hard questions across seven calibrated categories: temporal replay, constrained routing, compound instruction following, transformed-occupancy visual fit, all-piece visual packing, cube-net folding, and legal 3×3 Rubik's Cube solving. Seven categories that scored 100% across every calibration run were removed. Each run receives a cryptographically random subset and a signed four-hour token; keys remain inside the private Worker bundle.
+The bundled private bank contains 352 hard questions across eleven categories. Seven saturated categories were removed; four verifier-asymmetric search tasks were added: max-flow with a min-cut certificate, Game-of-Life preimage, BFS-optimal sliding puzzle, and planted Boolean-circuit inversion. Existing hard tracks cover temporal replay, constrained routing, compound instruction following, transformed occupancy, all-piece packing, cube-net folding, and legal 3×3 Rubik's Cube solving. Each run receives a random subset and signed four-hour token; keys remain inside the private Worker bundle.
 
 ## Critical privacy rule
 
@@ -83,8 +83,8 @@ The agent does everything itself:
 2. Receive a signed token and the selected tasks inline.
 3. Download listed PNG/text assets.
 4. Solve tasks.
-5. Submit one answer array to `/v1/submit`.
-6. Receive overall, category, item, difficulty and coverage scores immediately.
+5. Optionally submit one `mode:"check"` answer array for aggregate/category feedback only.
+6. Submit one `mode:"final"` answer array and receive the locked detailed report.
 
 No local FeatherBench installation, Docker, database, seed handling or manual release creation is required.
 
@@ -114,21 +114,22 @@ Profiles select a random number of bank items per category:
 
 | Profile | Per category | Total |
 |---|---:|---:|
-| smoke | 2 | 14 |
-| quick | 4 | 28 |
-| standard | 16 | 112 |
-| full | 32 | 224 |
+| smoke | 2 | 22 |
+| quick | 4 | 44 |
+| standard | 16 | 176 |
+| full | 32 | 352 |
 
-## Stateless design
+## One check, one final submission
 
-The Worker stores no run database. The signed token contains the selected item IDs, profile, expiry and run ID. Consequently:
+A SQLite-backed Durable Object is created automatically for each run. The signed token still binds selected item IDs, profile, expiry and run ID, while the Durable Object enforces:
 
-- no D1/KV setup is required;
-- horizontal scaling works automatically;
-- runs expire after four hours;
-- tokens cannot be modified without invalidating the signature.
+- at most one `mode:"check"` submission;
+- at most one `mode:"final"` submission;
+- check feedback contains aggregate/category scores only—no item diagnostics;
+- final feedback may contain item results because the run is permanently locked;
+- runs expire after four hours.
 
-A token can technically be submitted more than once because there is no state store. For strict one-attempt tournaments, add a Durable Object or KV-backed replay registry. Ordinary model comparisons can simply retain the first returned report.
+No manual D1 or KV setup is required; `wrangler.jsonc` declares the Durable Object binding and migration. This removes the repeated-submit oracle used to reverse-engineer earlier scoring.
 
 ## Correctness, speed and move efficiency
 
@@ -138,7 +139,7 @@ The report returns three headline metrics:
 - `speed_score`: start-to-submit wall-clock score normalized by profile;
 - `performance_score`: 90% correctness plus 10% speed.
 
-Rubik items additionally execute the submitted Singmaster moves against the scrambled cube. A solved cube earns at least 85%; the final 15% rewards move count relative to the known inverse scramble. Any shorter valid solution receives full efficiency credit.
+Rubik items execute the submitted Singmaster moves against the scrambled cube. An unsolved cube receives zero. A solved cube scores `min(1, hidden_reference_length / submitted_length)`. Difficulty and reference length are not sent to the model. The current reference is a valid inverse scramble rather than a proof of global optimality; sliding-puzzle items use certified BFS-optimal lengths.
 
 ## Visual and cube premises
 
@@ -146,6 +147,12 @@ Rubik items additionally execute the submitted Singmaster moves against the scra
 - `visual_packing`: use every piece exactly once to tile the target with no gaps, overlap, or out-of-bounds cells.
 - `cube_net`: fold the labeled 2D net and return the three opposite-face pairs.
 - `rubiks_cube`: solve a legal scrambled 3×3 state supplied as six U,R,F,D,L,B matrices.
+- `max_flow`: submit a feasible per-edge flow plus a min-cut certificate; full credit requires matching primal and dual values.
+- `life_preimage`: find any grid that evolves to the published state after the specified Life steps; grading is exact simulation.
+- `sliding_puzzle`: submit a valid solution, scored against a certified BFS optimum.
+- `circuit_inversion`: find any input satisfying a planted layered Boolean circuit output; grading is one circuit evaluation.
+
+Public task payloads no longer expose difficulty labels.
 
 ## Automatic deployments
 
@@ -186,5 +193,6 @@ npx wrangler secret put BENCH_SECRET
 ## Limits
 
 - The prebuilt bank and scorer live in the private Worker source; a model with access to that GitHub repository can cheat.
-- The Worker is stateless and does not enforce one submission per token.
-- Bank rotation requires the Python FeatherBench maintainer package, but ordinary model runs require only the deployed URL.
+- Rubik reference lengths are not yet certified global optima; use the separate move-count metric cautiously.
+- Cube-net generation should expand to all 11 topology families.
+- Bank rotation requires the private Python FeatherBench maintainer package, but ordinary model runs require only the deployed URL.
