@@ -1,6 +1,6 @@
 import bank from './bank.json' with { type: 'json' };
 
-const VERSION = 'featherbench-packing-staged-cf-1.1';
+const VERSION = 'featherbench-packing-staged-cf-1.2';
 const TOKEN_TTL_SECONDS = 4 * 60 * 60;
 const MIN_SOLVE_SECONDS = 20;
 const TIMER_EXEMPT_STAGES = 3;
@@ -107,13 +107,19 @@ function report(state) {
   const possible = bank.stages.reduce((n, s) => n + s.stage, 0);
   const earned = accepted.reduce((n, r) => n + r.stage, 0);
   const correctness = 100 * earned / possible;
-  const speed = accepted.length ? accepted.reduce((n, r) => n + Math.min(100, 100 * MIN_SOLVE_SECONDS / r.elapsed_seconds), 0) / accepted.length : 0;
+  const speed = accepted.length ? accepted.reduce((n, r) => n + Math.min(100, 100 * MIN_SOLVE_SECONDS / Math.max(0.001, r.elapsed_seconds)), 0) / accepted.length : 0;
+  const totalTime = state.records.reduce((n, r) => n + r.elapsed_seconds, 0);
+  const highest = accepted.reduce((n, r) => Math.max(n, r.stage), 0);
   return {
     conversation_code: state.conversation_code,
+    model: String(state.metadata?.model || 'unknown').slice(0, 100),
+    harness: String(state.metadata?.harness || 'unknown').slice(0, 100),
     status: state.status,
     certified: state.status === 'completed' || state.status === 'failed',
     tool_use_flagged: state.status === 'flagged_tool_use',
     completed_stages: accepted.length,
+    highest_solved_stage: highest,
+    total_time_seconds: round(totalTime),
     raw_correct_stages: state.records.filter(r => r.correct).length,
     total_stages: bank.stages.length,
     weighted_correctness_score: round(correctness),
@@ -121,6 +127,42 @@ function report(state) {
     performance_score: round(0.9 * correctness + 0.1 * speed),
     stage_results: state.records.map(r => ({ stage: r.stage, correct: r.correct, accepted: r.accepted, elapsed_seconds: r.elapsed_seconds, disposition: r.disposition })),
   };
+}
+
+function htmlEscape(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function publicResult(record) {
+  return {
+    run_id: record.run_id,
+    model: record.model,
+    harness: record.harness,
+    status: record.status,
+    highest_solved_stage: record.highest_solved_stage,
+    total_time_seconds: record.total_time_seconds,
+    weighted_correctness_score: record.weighted_correctness_score,
+    speed_score: record.speed_score,
+    performance_score: record.performance_score,
+    updated_at: record.updated_at,
+  };
+}
+function graphHtml(records) {
+  records = records.map(publicResult);
+  const W = 1040, H = 620, left = 90, right = 990, top = 45, bottom = 535;
+  const maxTime = Math.max(60, ...records.map(r => Number(r.total_time_seconds) || 0));
+  const x = t => left + (Math.max(0, Number(t) || 0) / maxTime) * (right - left);
+  const y = s => bottom - (Math.max(0, Math.min(bank.stages.length, Number(s) || 0)) / bank.stages.length) * (bottom - top);
+  const colors = { completed: '#20c997', active: '#5b8def', failed: '#ff6b6b', flagged_tool_use: '#f59f00' };
+  let grid = '';
+  for (let s = 0; s <= bank.stages.length; s++) grid += `<line x1="${left}" y1="${y(s)}" x2="${right}" y2="${y(s)}" stroke="#253047"/><text x="${left - 16}" y="${y(s) + 5}" text-anchor="end">${s}</text>`;
+  for (let i = 0; i <= 5; i++) { const t = maxTime * i / 5; grid += `<line x1="${x(t)}" y1="${top}" x2="${x(t)}" y2="${bottom}" stroke="#253047"/><text x="${x(t)}" y="${bottom + 28}" text-anchor="middle">${Math.round(t)}s</text>`; }
+  const points = records.map((r, i) => {
+    const label = htmlEscape(r.model || 'unknown');
+    const color = colors[r.status] || '#adb5bd';
+    return `<g><circle cx="${x(r.total_time_seconds)}" cy="${y(r.highest_solved_stage)}" r="8" fill="${color}" stroke="#f8f9fa" stroke-width="2"><title>${label} — stage ${r.highest_solved_stage}, ${r.total_time_seconds}s, ${htmlEscape(r.status)}</title></circle><text x="${x(r.total_time_seconds) + 11}" y="${y(r.highest_solved_stage) - 10 + (i % 3) * 10}" class="point-label">${label}</text></g>`;
+  }).join('');
+  const rows = [...records].sort((a, b) => (b.highest_solved_stage - a.highest_solved_stage) || (a.total_time_seconds - b.total_time_seconds)).map(r => `<tr><td>${htmlEscape(r.model)}</td><td>${htmlEscape(r.harness)}</td><td>${r.highest_solved_stage}</td><td>${r.total_time_seconds}</td><td>${r.performance_score}</td><td><span class="status ${htmlEscape(r.status)}">${htmlEscape(r.status)}</span></td></tr>`).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FeatherBench model graph</title><style>body{margin:0;background:#0b1020;color:#e9ecef;font:15px system-ui,sans-serif}.wrap{max-width:1120px;margin:auto;padding:32px 20px}h1{margin:0 0 8px;font-size:30px}p{color:#adb5bd}.card{background:#131a2c;border:1px solid #2b3753;border-radius:16px;padding:16px;margin-top:22px;overflow:auto}svg{width:100%;min-width:760px;height:auto}svg text{fill:#adb5bd;font-size:13px}.point-label{fill:#f1f3f5;font-size:12px;font-weight:600}.axis-label{fill:#f8f9fa;font-size:15px;font-weight:700}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px;border-bottom:1px solid #2b3753}th{color:#8fa8d8}.status{padding:3px 8px;border-radius:999px;background:#343a40}.completed{background:#087f5b}.failed{background:#c92a2a}.flagged_tool_use{background:#e67700}.empty{padding:70px;text-align:center;color:#adb5bd}</style></head><body><main class="wrap"><h1>FeatherBench model progress</h1><p>Each point is one run. Lower total time is farther left; higher solved stage is farther up. Updated automatically after submissions.</p><section class="card">${records.length ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Model performance scatter plot">${grid}<line x1="${left}" y1="${bottom}" x2="${right}" y2="${bottom}" stroke="#e9ecef"/><line x1="${left}" y1="${top}" x2="${left}" y2="${bottom}" stroke="#e9ecef"/>${points}<text x="${(left + right) / 2}" y="590" text-anchor="middle" class="axis-label">Total time</text><text x="24" y="${(top + bottom) / 2}" text-anchor="middle" transform="rotate(-90 24 ${(top + bottom) / 2})" class="axis-label">Highest solved puzzle</text></svg>` : '<div class="empty">No submitted runs yet.</div>'}</section><section class="card"><table><thead><tr><th>Model</th><th>Harness</th><th>Highest stage</th><th>Total time (s)</th><th>Performance</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></section></main></body></html>`;
 }
 
 function agentMd(origin) {
@@ -152,7 +194,7 @@ Return the ASCII map in \`answer\` (JSON newlines must be escaped):
 
 Submit it once to \`POST /v1/submit\`. A successful non-final response contains the next stage. Do not submit after any stop/flag/failure response.
 
-Scores: stage N is worth N points and correctness is all-or-nothing. The final report includes correctness, speed, and combined performance scores.
+Scores: stage N is worth N points and correctness is all-or-nothing. The final report includes correctness, speed, and combined performance scores. Supply accurate \`metadata.model\` and \`metadata.harness\` values so the run is labeled correctly on the public results graph at ${origin}/graph.
 `;
 }
 
@@ -160,6 +202,16 @@ export class RunGate {
   constructor(ctx, env) { this.ctx = ctx; this.env = env; }
   async fetch(req) {
     const body = await req.json();
+    if (body.action === 'record_result') {
+      const r = body.record;
+      if (!r || typeof r.run_id !== 'string' || r.run_id.length > 100) return json({ ok: false, error: 'bad result record' }, 400);
+      await this.ctx.storage.put(`result:${r.run_id}`, r);
+      return json({ ok: true });
+    }
+    if (body.action === 'list_results') {
+      const found = await this.ctx.storage.list({ prefix: 'result:', limit: 1000 });
+      return json({ ok: true, records: [...found.values()].sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))) });
+    }
     if (body.action === 'register') {
       const existing = await this.ctx.storage.get('state');
       if (existing) return json({ ok: false, error: 'run already registered' }, 409);
@@ -234,7 +286,15 @@ export default {
     const url = new URL(req.url);
     if (req.method === 'OPTIONS') return new Response('', { status: 204, headers: headers('text/plain') });
     try {
-      if (url.pathname === '/health') return json({ ok: true, version: VERSION, stages: bank.stages.length, track: 'no-solving-tools', bank_commitment: bank.manifest.public_commitment });
+      if (url.pathname === '/graph' || url.pathname === '/graph.json') {
+        const leaderboard = env.RUN_GATE.get(env.RUN_GATE.idFromName('__featherbench_leaderboard__'));
+        const listed = await leaderboard.fetch('https://leaderboard/list', { method: 'POST', body: JSON.stringify({ action: 'list_results' }) });
+        const data = await listed.json();
+        const records = Array.isArray(data.records) ? data.records : [];
+        if (url.pathname === '/graph.json') return json({ ok: true, records: records.map(publicResult) });
+        return new Response(graphHtml(records), { headers: headers('text/html; charset=utf-8') });
+      }
+      if (url.pathname === '/health') return json({ ok: true, version: VERSION, stages: bank.stages.length, track: 'no-solving-tools', graph: `${url.origin}/graph`, bank_commitment: bank.manifest.public_commitment });
       if (url.pathname === '/' || url.pathname === '/agent.md') return new Response(agentMd(url.origin), { headers: headers('text/markdown; charset=utf-8') });
       if (url.pathname === '/v1/start' && req.method === 'POST') {
         const body = await readJson(req);
@@ -265,7 +325,15 @@ export default {
         if (body.attest_no_solving_tools !== true) throw new Error('attest_no_solving_tools:true is required');
         const payload = await verify(env, body.run_token);
         const gate = env.RUN_GATE.get(env.RUN_GATE.idFromName(payload.run_id));
-        return await gate.fetch('https://gate/submit', { method: 'POST', body: JSON.stringify({ action: 'submit', answer: body.answer }) });
+        const gateResponse = await gate.fetch('https://gate/submit', { method: 'POST', body: JSON.stringify({ action: 'submit', answer: body.answer }) });
+        const result = await gateResponse.json();
+        if (result.report) {
+          try {
+            const leaderboard = env.RUN_GATE.get(env.RUN_GATE.idFromName('__featherbench_leaderboard__'));
+            await leaderboard.fetch('https://leaderboard/record', { method: 'POST', body: JSON.stringify({ action: 'record_result', record: { run_id: payload.run_id, ...result.report, updated_at: new Date().toISOString() } }) });
+          } catch (_) { /* Per-run SQLite state remains authoritative if the index write fails. */ }
+        }
+        return json(result, gateResponse.status);
       }
       return json({ ok: false, error: 'not found' }, 404);
     } catch (e) {

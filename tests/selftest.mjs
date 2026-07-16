@@ -6,6 +6,7 @@ class Storage {
   constructor() { this.m = new Map(); }
   async get(k) { return this.m.get(k); }
   async put(k, v) { this.m.set(k, structuredClone(v)); }
+  async list({ prefix = '', limit = 1000 } = {}) { return new Map([...this.m].filter(([k]) => k.startsWith(prefix)).slice(0, limit)); }
   async transaction(fn) { return await fn(this); }
 }
 
@@ -86,4 +87,17 @@ assert.equal(state.conversation_code, CODE, 'conversation code persisted in Dura
 assert.equal(state.scores.completed_stages, 1, 'scores persisted alongside conversation code');
 assert.equal(JSON.stringify(body).includes('reference_map'), false);
 
-console.log(`ok: ${bank.stages.length} staged packing tasks and protocol invariants`);
+// The shared SQLite-backed Durable Object index powers /graph without exposing conversation codes.
+const leaderboardStorage = new Storage();
+const leaderboardGate = new RunGate({ storage: leaderboardStorage }, {});
+r = await leaderboardGate.fetch(new Request('https://leaderboard/record', { method: 'POST', body: JSON.stringify({ action: 'record_result', record: { run_id: 'run-1', conversation_code: CODE, model: 'GraphModel', harness: 'manual', status: 'failed', highest_solved_stage: 3, total_time_seconds: 91.5, weighted_correctness_score: 16.667, speed_score: 50, performance_score: 20, updated_at: '2026-07-16T12:00:00Z' } }) }));
+assert.equal(r.status, 200);
+const graphEnv = { RUN_GATE: { idFromName: name => name, get: () => ({ fetch: (url, init) => leaderboardGate.fetch(new Request(url, init)) }) } };
+r = await worker.fetch(new Request('https://bench.test/graph'), graphEnv);
+const graphText = await r.text();
+assert.equal(r.status, 200);
+assert.match(graphText, /GraphModel/);
+assert.match(graphText, /Highest solved puzzle/);
+assert.equal(graphText.includes(CODE), false, 'public graph must not expose conversation code');
+
+console.log(`ok: ${bank.stages.length} staged packing tasks, persistence, and graph invariants`);

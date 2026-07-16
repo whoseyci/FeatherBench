@@ -144,10 +144,11 @@ def answer_rows(solution, target):
             for y in range(max(y for _, y in target) + 1)]
 
 
-def prompt_for(target_rows, shown):
+def prompt_for(target_rows, shown, has_decoys):
+    pool_rule = "One or more candidates may be decoys." if has_decoys else "Every candidate tile is used exactly once; there are no decoys in this stage."
     parts = [
         "Solve this purely by visual deduction and reasoning. Solving tools are strictly prohibited: do not use scripts, code, image extraction, search, SAT/exact-cover solvers, or external assistance. Transport-only API calls are allowed.",
-        "Tiles may be rotated and flipped. One or more candidates may be decoys.",
+        "Tiles may be rotated and flipped. " + pool_rule,
         "Return only an ASCII map with exactly the TARGET dimensions. Keep `.` outside the target and fill every `#` target cell with the uppercase letter of the tile covering it. Use each selected tile exactly once; do not add commentary or fences.",
         "",
         "TARGET",
@@ -183,7 +184,7 @@ def generated_stage(stage, required, decoys, size_each):
         target_rows = rows(target)
         return {
             "stage": stage,
-            "prompt": prompt_for(target_rows, piece_map),
+            "prompt": prompt_for(target_rows, piece_map, decoys > 0),
             "public": {"target_width": len(target_rows[0]), "target_height": len(target_rows), "candidates": len(piece_map)},
             "key": {
                 "target": target_rows,
@@ -247,6 +248,9 @@ def maximum_stage():
 .##.
 ##.."""),
     }
+    # The original maximum pool included G and H as decoys. Stages 4+ deliberately
+    # omit decoys so the benchmark measures packing rather than long subset search.
+    pieces = {label: shape for label, shape in pieces.items() if label in "ABCDEF"}
     to_cells = lambda rs: frozenset((x, y) for y, row in enumerate(rs) for x, ch in enumerate(row) if ch == "#")
     target_cells = to_cells(target)
     piece_map = {k: to_cells(v) for k, v in pieces.items()}
@@ -255,19 +259,19 @@ def maximum_stage():
         raise RuntimeError(f"maximum stage must have exactly one solution, got {len(sols)}")
     return {
         "stage": 8,
-        "prompt": prompt_for(target, piece_map),
-        "public": {"target_width": 8, "target_height": 10, "candidates": 8},
+        "prompt": prompt_for(target, piece_map, False),
+        "public": {"target_width": 8, "target_height": 10, "candidates": 6},
         "key": {"target": target, "pieces": pieces, "reference_map": answer_rows(sols[0], target_cells)},
     }
 
 
 def main():
-    specs = [(1, 1, 4), (2, 1, 5), (3, 1, 6), (4, 1, 6), (5, 2, 7), (6, 2, 8), (7, 2, 9)]
+    specs = [(1, 1, 4), (2, 1, 5), (3, 1, 6), (4, 0, 6), (5, 0, 7), (6, 0, 8), (7, 0, 9)]
     stages = [generated_stage(i, required, decoys, size) for i, (required, decoys, size) in enumerate(specs, 1)]
     stages.append(maximum_stage())
     public_digest = hashlib.sha256(json.dumps([{"stage": x["stage"], "prompt": x["prompt"]} for x in stages], sort_keys=True).encode()).hexdigest()
     bank = {
-        "manifest": {"version": "featherbench-packing-staged-1.0", "stages": len(stages), "public_commitment": public_digest},
+        "manifest": {"version": "featherbench-packing-staged-1.1", "stages": len(stages), "public_commitment": public_digest},
         "stages": stages,
     }
     out = ROOT / "src" / "bank.json"
