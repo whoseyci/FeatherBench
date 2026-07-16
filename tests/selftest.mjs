@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
 import bank from '../src/bank.json' with { type: 'json' };
-import { RunGate, verifyPacking } from '../src/index.js';
+import worker, { RunGate, verifyPacking } from '../src/index.js';
 
 class Storage {
   constructor() { this.m = new Map(); }
   async get(k) { return this.m.get(k); }
   async put(k, v) { this.m.set(k, structuredClone(v)); }
   async transaction(fn) { return await fn(this); }
+}
+
+// Public pre-task surfaces must not disclose the private clock or threshold.
+for (const path of ['/agent.md', '/health']) {
+  const publicResponse = await worker.fetch(new Request('https://bench.test' + path), {});
+  const publicText = await publicResponse.text();
+  assert.equal(/20\s*seconds?|timer|minimum[_ -]?stage|speed.integrity.threshold|2000\s*\//i.test(publicText), false, `private clock leaked at ${path}`);
 }
 
 const refs = bank.stages.map(s => s.key.reference_map.join('\n'));

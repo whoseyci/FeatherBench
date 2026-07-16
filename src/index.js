@@ -126,7 +126,6 @@ This track measures unaided visual-spatial deduction. **Solving tools are strict
 
 The API releases exactly one task at a time, beginning with one required tile and one decoy. A completely correct answer advances to a harder stage. Every stage has one attempt and only exact valid tilings count. An incorrect answer permanently ends the run, preventing score-oracle probing.
 
-Timing begins when each stage is released. Stages 1–${TIMER_EXEMPT_STAGES} have no minimum-time rule. Starting at stage ${TIMER_EXEMPT_STAGES + 1}, a correct submission received in under ${MIN_SOLVE_SECONDS} seconds permanently blocks the run and marks it as suspected tool use. The response instructs the participant to stop and self-report the flag. This timing rule is a heuristic, not proof of tool use.
 
 ## Start
 
@@ -144,9 +143,9 @@ Return the ASCII map in \`answer\` (JSON newlines must be escaped):
 {"run_token":"...","attest_no_solving_tools":true,"answer":"..AA..\\n.BBA.."}
 \`\`\`
 
-Submit it once to \`POST /v1/submit\`. A successful non-final response contains the next stage and resets that stage's timer. Do not submit after any stop/flag/failure response.
+Submit it once to \`POST /v1/submit\`. A successful non-final response contains the next stage. Do not submit after any stop/flag/failure response.
 
-Scores: stage N is worth N points; correctness is all-or-nothing. The speed score averages \`min(100, 2000/elapsed_seconds)\` over accepted stages. Performance is 90% weighted correctness and 10% speed.
+Scores: stage N is worth N points and correctness is all-or-nothing. The final report includes correctness, speed, and combined performance scores.
 `;
 }
 
@@ -184,7 +183,7 @@ export class RunGate {
         return;
       }
       if (stage.stage > TIMER_EXEMPT_STAGES && elapsed < MIN_SOLVE_SECONDS) {
-        record.disposition = 'flagged_sub_20_seconds';
+        record.disposition = 'flagged_speed_integrity_threshold';
         state.records.push(record);
         state.status = 'flagged_tool_use';
         await tx.put('state', state);
@@ -195,7 +194,7 @@ export class RunGate {
           stop: true,
           tool_use_flagged: true,
           self_report_required: true,
-          message: 'STOP. A completely correct task was submitted in under 20 seconds. Further submissions are blocked. Flag this run as suspected tool use and do not continue.',
+          message: 'STOP. This submission crossed a private speed-integrity threshold. Further submissions are blocked. Flag this run for integrity review and do not continue.',
           report: report(state),
         };
         return;
@@ -224,7 +223,7 @@ export default {
     const url = new URL(req.url);
     if (req.method === 'OPTIONS') return new Response('', { status: 204, headers: headers('text/plain') });
     try {
-      if (url.pathname === '/health') return json({ ok: true, version: VERSION, stages: bank.stages.length, track: 'no-solving-tools', minimum_stage_seconds: MIN_SOLVE_SECONDS, timer_exempt_stages: TIMER_EXEMPT_STAGES, bank_commitment: bank.manifest.public_commitment });
+      if (url.pathname === '/health') return json({ ok: true, version: VERSION, stages: bank.stages.length, track: 'no-solving-tools', bank_commitment: bank.manifest.public_commitment });
       if (url.pathname === '/' || url.pathname === '/agent.md') return new Response(agentMd(url.origin), { headers: headers('text/markdown; charset=utf-8') });
       if (url.pathname === '/v1/start' && req.method === 'POST') {
         if (!env.BENCH_SECRET) throw new Error('BENCH_SECRET missing');
@@ -243,7 +242,7 @@ export default {
           run_token: runToken,
           submit_url: `${url.origin}/v1/submit`,
           expires_at: payload.exp,
-          policy: { one_attempt_per_stage: true, all_or_nothing: true, solving_tools_prohibited: true, timer_exempt_stages: TIMER_EXEMPT_STAGES, correct_under_seconds_flags_tool_use_from_stage: { seconds: MIN_SOLVE_SECONDS, first_stage: TIMER_EXEMPT_STAGES + 1 } },
+          policy: { one_attempt_per_stage: true, all_or_nothing: true, solving_tools_prohibited: true, private_integrity_checks: true },
           task: publicStage(bank.stages[0]),
         });
       }
