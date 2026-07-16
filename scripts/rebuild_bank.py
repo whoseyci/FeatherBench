@@ -3,7 +3,7 @@
 import argparse, json, pathlib, shutil, tempfile
 from featherbench.core import create_suite, load_jsonl
 
-p=argparse.ArgumentParser();p.add_argument('--seed',required=True);p.add_argument('--profile',default='full',choices=['smoke','quick','standard','full']);args=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--seed',required=True);p.add_argument('--profile',default='marathon',choices=['smoke','quick','standard','full','marathon']);args=p.parse_args()
 root=pathlib.Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory() as td:
     run=pathlib.Path(td)/'run';create_suite(run,args.seed,args.profile)

@@ -110,14 +110,15 @@ curl -sS -X POST https://YOUR-WORKER.workers.dev/v1/start \
   }' > start.json
 ```
 
-Profiles select a random number of bank items per category:
+Profiles select a small, difficulty-stratified subset per category. `standard` intentionally selects private levels 2–5; `full` over-samples levels 4–5. The model never receives those labels:
 
 | Profile | Per category | Total |
 |---|---:|---:|
-| smoke | 2 | 30 |
-| quick | 4 | 60 |
-| standard | 16 | 240 |
-| full | 32 | 480 |
+| smoke | 1 | 15 |
+| quick | 2 | 30 |
+| standard | 4 | 60 |
+| full | 8 | 120 |
+| marathon | 32 | 480 |
 
 ## One check, one final submission
 
