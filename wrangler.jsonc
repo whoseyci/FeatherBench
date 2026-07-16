@@ -1,13 +1,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "featherbench-api",
+  "name": "featherbench",
   "main": "src/index.js",
   "compatibility_date": "2026-05-03",
-  "assets": {
-    "directory": "./public",
-    "binding": "ASSETS",
-    "run_worker_first": true
-  },
   "durable_objects": {
     "bindings": [
       { "name": "RUN_GATE", "class_name": "RunGate" }
@@ -16,7 +11,5 @@
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["RunGate"] }
   ],
-  "observability": {
-    "enabled": true
-  }
+  "observability": { "enabled": true }
 }

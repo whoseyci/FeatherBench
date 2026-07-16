@@ -1,96 +1,261 @@
 import bank from './bank.json' with { type: 'json' };
 
-const VERSION = 'featherbench-cf-4.1';
-const TTL_SECONDS = 4 * 60 * 60;
-const PROFILE_COUNTS = { smoke: 1, quick: 2, standard: 4, full: 8, marathon: 32 };
-const MAX_BODY = 16 * 1024 * 1024;
+const VERSION = 'featherbench-packing-staged-cf-1.0';
+const TOKEN_TTL_SECONDS = 4 * 60 * 60;
+const MIN_SOLVE_SECONDS = 20;
+const MAX_BODY = 256 * 1024;
 const enc = new TextEncoder();
-const byId = new Map(bank.items.map(x => [x.id, x]));
-const categories = [...new Set(bank.items.map(x => x.category))];
 
-function headers(type='application/json; charset=utf-8') { return {'content-type':type,'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type','cache-control':'no-store','x-content-type-options':'nosniff'}; }
-function json(data,status=200){return new Response(JSON.stringify(data),{status,headers:headers()});}
-function b64(bytes){let s='';for(const b of bytes)s+=String.fromCharCode(b);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
-function unb64(s){s=s.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';const x=atob(s);return Uint8Array.from(x,c=>c.charCodeAt(0));}
-async function sign(secret,body){const key=await crypto.subtle.importKey('raw',enc.encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);return new Uint8Array(await crypto.subtle.sign('HMAC',key,enc.encode(body)));}
-function equal(a,b){if(!a||!b||a.length!==b.length)return false;let d=0;for(let i=0;i<a.length;i++)d|=a[i]^b[i];return d===0;}
-async function tokenFor(env,payload){const body=b64(enc.encode(JSON.stringify(payload)));return body+'.'+b64(await sign(env.BENCH_SECRET,body));}
-async function verify(env,token){if(!env.BENCH_SECRET)throw new Error('BENCH_SECRET is not configured');const [body,sig]=String(token||'').split('.');if(!body||!sig||!equal(unb64(sig),await sign(env.BENCH_SECRET,body)))throw new Error('invalid token');const p=JSON.parse(new TextDecoder().decode(unb64(body)));if(p.exp<Date.now()/1000)throw new Error('expired token');return p;}
-async function readJson(req){const n=Number(req.headers.get('content-length')||0);if(n>MAX_BODY)throw new Error('body too large');const text=await req.text();if(text.length>MAX_BODY)throw new Error('body too large');return JSON.parse(text);}
-function shuffle(a,random){a=[...a];for(let i=a.length-1;i>0;i--){const j=random[i%random.length]%(i+1);[a[i],a[j]]=[a[j],a[i]];}return a;}
-function selectItems(count,random,profile='standard'){const selected=[];let k=0,levelPlan={smoke:[4],quick:[3,5],standard:[2,3,4,5],full:[1,2,3,4,5,4,5,5]}[profile];for(const c of categories){const group=bank.items.filter(x=>x.category===c);if(profile==='marathon')selected.push(...shuffle(group,random.slice(k,k+32)));else{const bins=Object.fromEntries([1,2,3,4,5].map(d=>[d,shuffle(group.filter(x=>x.difficulty===d),random.slice(k+d,k+d+20))]));for(let i=0;i<count;i++){const d=levelPlan[i%levelPlan.length],item=bins[d].shift();if(item)selected.push(item);}}k+=7;}return shuffle(selected,random.slice(-32));}
-function publicItem(x,origin){return {id:x.id,category:x.category,prompt:x.prompt,assets:(x.assets||[]).map(a=>({...a,url:`${origin}/${a.path}`}))};}
-function parseAnswer(a){if(a&&typeof a==='object')return a;let s=String(a??'').trim();const m=s.match(/```(?:json)?\s*([\s\S]*?)```/i);if(m)s=m[1];try{return JSON.parse(s);}catch{return a;}}
-function numEq(a,b,e=.005){const n=Number(a);return Number.isFinite(n)&&Math.abs(n-Number(b))<=e;}
-function mapFrac(a,e){if(!a||typeof a!=='object')return 0;const keys=Object.keys(e);return keys.reduce((n,k)=>n+(a[k]===e[k]||(typeof e[k]==='number'&&numEq(a[k],e[k]))),0)/keys.length;}
-function jaccard(a,b){a=new Set(a||[]);b=new Set(b||[]);const u=new Set([...a,...b]);if(!u.size)return 1;let n=0;for(const x of a)if(b.has(x))n++;return n/u.size;}
-function lcs(a,b){const dp=Array.from({length:a.length+1},()=>Array(b.length+1).fill(0));for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++)dp[i][j]=a[i-1]===b[j-1]?dp[i-1][j-1]+1:Math.max(dp[i-1][j],dp[i][j-1]);return dp[a.length][b.length];}
-
-function scoreSchedule(a,k){if(!a||!Array.isArray(a.assignments))return 0;const tasks=Object.fromEntries(k.tasks.map(x=>[x.id,x])),workers=k.workers,by=Object.fromEntries(a.assignments.map(x=>[x.task_id,x]));let checks=[a.assignments.length===k.tasks.length&&Object.keys(by).length===k.tasks.length],loads={},valid=true;
- for(const [id,t] of Object.entries(tasks)){const x=by[id];if(!x){valid=false;continue;}const s=Number(x.start),e=Number(x.end),w=x.worker;if(!Number.isInteger(s)||!Number.isInteger(e)||s<t.release||e-s!==t.duration||!workers[w]||!workers[w].skills.includes(t.skill))valid=false;if(t.deps.some(d=>!by[d]||Number(by[d].end)>s))valid=false;loads[w]=(loads[w]||0)+e-s;}checks.push(valid,Object.entries(loads).every(([w,n])=>n<=workers[w].capacity));let overlap=true;for(const w of Object.keys(workers)){const jobs=a.assignments.filter(x=>x.worker===w).sort((x,y)=>x.start-y.start);if(jobs.some((x,i)=>i&&jobs[i-1].end>x.start))overlap=false;}checks.push(overlap);const ms=Math.max(...a.assignments.map(x=>Number(x.end)));checks.push(Number(a.makespan)===ms);if(checks.every(Boolean))return Math.max(.5,1-.1*Math.max(0,ms-k.optimum));return checks.filter(Boolean).length/checks.length*.5;}
-function sentences(s){return String(s).trim().split(/(?<=[.!?])["']?(?:\s+|$)/).filter(x=>x.trim());}
-function scoreInstruction(a,k){const text=String(a),c=k.constraints,words=(text.toLowerCase().match(/[\p{L}\p{N}'-]+/gu)||[]),ch=[];for(const w of c.required_words)ch.push(words.includes(w.toLowerCase()));for(const w of c.forbidden_words)ch.push(!words.includes(w.toLowerCase()));ch.push((text.match(/^SECTION \d+\s*$/gm)||[]).length===c.sections);ch.push(sentences(text).length===c.sentences);const parts=text.split(/^SECTION \d+\s*$/gm).slice(1);for(let i=0;i<parts.length;i++){const lines=parts[i].trim().split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const prose=c.heading_acrostic?lines[1]:lines[0];ch.push(String(prose||'').startsWith(c.section_first_words[i]));}if(c.heading_acrostic){const subs=parts.map(x=>x.trim().split(/\r?\n/).map(y=>y.trim()).filter(Boolean)[0]);ch.push(subs.length===c.sections&&subs.map(x=>x[0]?.toUpperCase()).join('')===c.heading_acrostic);}return ch.filter(Boolean).length/ch.length;}
-function normCells(cells){let pts=cells.map(p=>[Number(p[0]),Number(p[1])]),mx=Math.min(...pts.map(p=>p[0])),my=Math.min(...pts.map(p=>p[1]));return pts.map(([x,y])=>[x-mx,y-my]).sort((a,b)=>a[0]-b[0]||a[1]-b[1]);}
-function transformCells(cells,rotation=0,reflect=false){let pts=cells.map(([x,y])=>[reflect?-x:x,y]);for(let i=0;i<((Number(rotation)%360+360)%360)/90;i++)pts=pts.map(([x,y])=>[-y,x]);return normCells(pts);}
-function placedCells(cells,rotation,reflect,offset){return transformCells(cells,rotation,reflect).map(([x,y])=>[x+Number(offset[0]),y+Number(offset[1])]);}
-function cellSet(cells){return new Set(cells.map(p=>p[0]+','+p[1]));}
-function visualFit(a,k){if(!a||!k.options?.[a.option]||!Array.isArray(a.offset))return 0;const got=cellSet(placedCells(k.options[a.option],a.rotation,a.reflect,a.offset)),target=cellSet(k.target_cells);if(got.size===target.size&&[...got].every(x=>target.has(x)))return 1;const inter=[...got].filter(x=>target.has(x)).length,union=new Set([...got,...target]).size;return .45*(a.option===k.expected.option)+.55*(union?inter/union:0);}
-function visualPacking(a,k){if(!a||!Array.isArray(a.placements))return 0;const target=cellSet(k.target_cells),needed=k.solution_piece_count||Object.keys(k.pieces).length,seen=new Set(),occupied=new Set();let overlap=0,inside=0,total=target.size;for(const p of a.placements){if(!p||!k.pieces[p.piece]||seen.has(p.piece)||!Array.isArray(p.offset))continue;seen.add(p.piece);for(const q of placedCells(k.pieces[p.piece],p.rotation,p.reflect,p.offset)){const s=q[0]+','+q[1];if(occupied.has(s))overlap++;if(target.has(s))inside++;occupied.add(s);}}if(seen.size===needed&&overlap===0&&occupied.size===target.size&&[...occupied].every(x=>target.has(x)))return 1;const coverage=inside/Math.max(1,total),iou=[...occupied].filter(x=>target.has(x)).length/Math.max(1,new Set([...occupied,...target]).size);return Math.max(0,.2*Math.min(1,seen.size/needed)+.4*Math.min(1,coverage)+.4*iou-.3*Math.min(1,overlap/target.size));}
-function cubeNet(a,k){if(!a||!Array.isArray(a.opposite_pairs))return 0;const norm=a.opposite_pairs.filter(x=>Array.isArray(x)&&x.length===2).map(x=>x.map(String).sort()).sort((x,y)=>JSON.stringify(x).localeCompare(JSON.stringify(y)));const exp=k.expected.opposite_pairs;return norm.length===3?norm.filter(p=>exp.some(e=>JSON.stringify(e)===JSON.stringify(p))).length/3:0;}
-const FACES='URFDLB';
-function rv(v,axis,q){let [x,y,z]=v;for(let i=0;i<((q%4)+4)%4;i++){if(axis===0)[x,y,z]=[x,-z,y];else if(axis===1)[x,y,z]=[z,y,-x];else [x,y,z]=[-y,x,z];}return [x,y,z];}
-function stickersFromFaces(faces){const n=faces.U.length,h=Math.floor(n/2),out=[];for(const f of FACES)for(let r=0;r<n;r++)for(let c=0;c<n;c++){let pos,norm;if(f==='F'){pos=[c-h,h-r,h];norm=[0,0,1]}else if(f==='B'){pos=[h-c,h-r,-h];norm=[0,0,-1]}else if(f==='U'){pos=[c-h,h,r-h];norm=[0,1,0]}else if(f==='D'){pos=[c-h,-h,h-r];norm=[0,-1,0]}else if(f==='R'){pos=[h,h-r,h-c];norm=[1,0,0]}else{pos=[-h,h-r,c-h];norm=[-1,0,0]}out.push({pos,n:norm,color:faces[f][r][c]});}return out;}
-function cubeMove(state,m,n){const z=m.match(/^([URFDLB])(w)?(2|')?$/);if(!z)throw Error('bad move');const [,face,wide,suffix]=z,cfg={R:[0,1],L:[0,-1],U:[1,1],D:[1,-1],F:[2,1],B:[2,-1]}[face],[axis,sign]=cfg,turns=suffix==='2'?2:suffix==="'"?-1:1,q=(-sign*turns)%4,h=Math.floor(n/2),selected=p=>wide?(sign>0?p[axis]>=h-1:p[axis]<=-h+1):p[axis]===sign*h;return state.map(s=>selected(s.pos)?{...s,pos:rv(s.pos,axis,q),n:rv(s.n,axis,q)}:s);}
-function rubiks(a,k){if(!a||typeof a.moves!=='string')return [0,{reason:'bad_shape'}];const moves=a.moves.trim()?a.moves.trim().split(/\s+/):[],n=k.size||k.faces.U.length;if(moves.length>240||moves.some(m=>!m.match(/^[URFDLB](?:w)?(?:2|')?$/)))return [0,{reason:'invalid_moves'}];let state=stickersFromFaces(k.faces);for(const m of moves)state=cubeMove(state,m,n);const normalFace={"1,0,0":'R',"-1,0,0":'L',"0,1,0":'U',"0,-1,0":'D',"0,0,1":'F',"0,0,-1":'B'},correct=state.filter(s=>s.color===normalFace[s.n.join(',')]).length/(6*n*n),solved=correct===1,eff=Math.min(1,k.reference_length/Math.max(1,moves.length));return [solved?eff:0,{solved,moves:moves.length,reference_length:k.reference_length}];}
-function maxFlow(a,k){if(!a||typeof a.flows!=='object'||!Array.isArray(a.cut_source_side))return 0;const bal=Object.fromEntries(k.nodes.map(n=>[n,0]));for(const e of k.edges){const f=Number(a.flows[e.id]??0);if(!Number.isInteger(f)||f<0||f>e.capacity)return 0;bal[e.u]-=f;bal[e.v]+=f;}if(k.nodes.some(n=>n!==k.source&&n!==k.sink&&bal[n]!==0))return 0;const value=bal[k.sink];if(-bal[k.source]!==value||value<0)return 0;const cut=new Set(a.cut_source_side),cap=cut.has(k.source)&&!cut.has(k.sink)?k.edges.filter(e=>cut.has(e.u)&&!cut.has(e.v)).reduce((n,e)=>n+e.capacity,0):-1,ratio=Math.min(1,value/Math.max(1,k.optimum));return .8*ratio+.2*(cap===value&&value===k.optimum);}
-function lifeStep(g){const n=g.length,out=Array.from({length:n},()=>Array(n).fill(0));for(let r=0;r<n;r++)for(let c=0;c<n;c++){let z=0;for(let rr=Math.max(0,r-1);rr<Math.min(n,r+2);rr++)for(let cc=Math.max(0,c-1);cc<Math.min(n,c+2);cc++)if(rr!==r||cc!==c)z+=g[rr][cc];out[r][c]=z===3||(g[r][c]&&z===2)?1:0;}return out;}
-function life(a,k){let g=a?.preimage;if(!Array.isArray(g)||g.length!==k.size||g.some(r=>!Array.isArray(r)||r.length!==k.size||r.some(x=>x!==0&&x!==1)))return 0;for(let i=0;i<k.steps;i++)g=lifeStep(g);return JSON.stringify(g)===JSON.stringify(k.final)?1:0;}
-function sliding(a,k){const m=a?.moves;if(typeof m!=='string'||!/^[UDLR]*$/.test(m)||m.length>200)return 0;const s=[...k.state],delta={U:-3,D:3,L:-1,R:1};for(const ch of m){const z=s.indexOf(0),c=z%3,n=z+delta[ch];if(n<0||n>=9||(ch==='L'&&c===0)||(ch==='R'&&c===2))return 0;[s[z],s[n]]=[s[n],s[z]];}if(JSON.stringify(s)!==JSON.stringify([1,2,3,4,5,6,7,8,0]))return 0;return Math.min(1,k.optimum/Math.max(1,m.length));}
-function circuit(a,k){const bits=a?.input_bits;if(typeof bits!=='string'||bits.length!==k.n||!/^[01]+$/.test(bits))return 0;const w=[...bits].map(Number);for(const g of k.gates){const x=w[g.a];w.push(g.op==='NOT'?1-x:g.op==='XOR'?x^w[g.b]:g.op==='AND'?x&w[g.b]:x|w[g.b]);}return w.slice(-16).join('')===k.target?1:0;}
-function chessScore(a,k){if(!a||!Array.isArray(a.candidates)||!Array.isArray(a.pv))return 0;const rel=new Map(k.candidates.map((m,i)=>[m,3-i])),dcg=xs=>xs.slice(0,3).reduce((n,m,i)=>n+(Math.pow(2,rel.get(String(m))||0)-1)/Math.log2(i+2),0),ndcg=dcg(a.candidates)/dcg(k.candidates),pv=k.pv.reduce((n,m,i)=>n+(String(a.pv[i])===m),0)/Math.max(1,k.pv.length);return .65*ndcg+.35*pv;}
-function maker(a,k){if(!a||!Array.isArray(a.pairs)||a.pairs.some(p=>!Array.isArray(p)||p.length!==2||p[0]===p[1]))return 0;const flat=a.pairs.flat().map(String);if(flat.length!==k.elements.length||new Set(flat).size!==k.elements.length||flat.some(x=>!k.elements.includes(x)))return 0;const ps=a.pairs.map(p=>new Set(p.map(String)));return k.edges.every(e=>{const s=new Set(e);return ps.some(p=>[...p].every(x=>s.has(x)))} )?1:0;}
-function tiling(a,k){if(!a||!Array.isArray(a.period)||!Array.isArray(a.weights))return 0;const [p,q]=a.period.map(Number),w=a.weights;if(!(p>=1&&q>=1&&p<=k.max_period&&q<=k.max_period)||w.length!==p||w.some(r=>!Array.isArray(r)||r.length!==q||r.some(x=>!Number.isInteger(x)||Math.abs(x)>100)))return 0;for(const shape of k.shapes)for(let dr=0;dr<p;dr++)for(let dc=0;dc<q;dc++)if(shape.reduce((n,[r,c])=>n+w[(r+dr)%p][(c+dc)%q],0)!==0)return 0;const [H,W]=k.board;let total=0;for(let r=0;r<p;r++)for(let c=0;c<q;c++)total+=w[r][c]*(r<H?Math.floor((H-1-r)/p)+1:0)*(c<W?Math.floor((W-1-c)/q)+1:0);return total!==0?1:0;}
-function sequenceScore(a,k){return a&&Array.isArray(a.next)&&JSON.stringify(a.next)===JSON.stringify(k.expected)?1:0;}
-function coloring(a,k){if(!a||!Array.isArray(a.colors)||!Array.isArray(a.clique)||a.k!==k.optimum||a.colors.length!==k.vertices||new Set(a.colors).size>a.k)return 0;const es=new Set(k.edges.map(e=>e[0]+','+e[1]));if(k.edges.some(([u,v])=>a.colors[u]===a.colors[v]))return 0;if(a.clique.length!==a.k||new Set(a.clique).size!==a.k||a.clique.some(v=>v<0||v>=k.vertices))return 0;for(let i=0;i<a.k;i++)for(let j=i+1;j<a.k;j++){const u=Math.min(a.clique[i],a.clique[j]),v=Math.max(a.clique[i],a.clique[j]);if(!es.has(u+','+v))return 0;}return 1;}
-function scoreItem(item,raw){const a=parseAnswer(raw),k=item.key,c=item.category;
- if(c==='truth_graph')return mapFrac(a,k.expected);
- if(c==='scheduling')return scoreSchedule(a,k);
- if(c==='temporal'){if(!a||typeof a!=='object')return 0;const e=k.expected,seq=lcs(a.accepted_record_order||[],e.accepted_record_order)/e.accepted_record_order.length,ig=jaccard(a.ignored_record_ids,e.ignored_record_ids),vals=['on_hand','reserved','available'].filter(x=>numEq(a[x],e[x])).length/3;return .45*seq+.2*ig+.35*vals;}
- if(c==='finance'){if(!a||typeof a!=='object')return 0;const e=k.expected,ps=Object.keys(e.net_by_product),net=ps.filter(p=>numEq(a.net_by_product?.[p]??0,e.net_by_product[p])).length/ps.length,vat=ps.filter(p=>numEq(a.vat_by_product?.[p]??0,e.vat_by_product[p])).length/ps.length,tot=['total_net','total_vat','total_gross'].filter(x=>numEq(a[x],e[x])).length/3;return .35*net+.2*vat+.3*tot+.15*jaccard(a.invalid_rows,e.invalid_rows);}
- if(c==='bayes'){const e=k.expected;return (a&&typeof a==='object') ? .45*numEq(a.posterior,e.posterior,5e-7)+.35*numEq(a.likelihood_ratio_product,e.likelihood_ratio_product,5e-7)+.2*(a.decision===e.decision) : 0;}
- if(c==='routing'){const e=k.expected;return (a&&typeof a==='object') ? .55*(JSON.stringify(a.path)===JSON.stringify(e.path))+.15*numEq(a.time,e.time)+.15*numEq(a.cost,e.cost)+.15*numEq(a.risk,e.risk) : 0;}
- if(c==='sql'){return (a&&typeof a==='object') ? (JSON.stringify(a.rows)===JSON.stringify(k.expected_rows)? .85:0)+(typeof a.sql==='string'&&a.sql.trim()? .15:0) : 0;}
- if(c==='instruction')return scoreInstruction(raw,k);
- if(c==='provenance'){const e=k.expected;return (a&&typeof a==='object') ? .55*jaccard(a.canonical_evidence_ids,e.canonical_evidence_ids)+.3*jaccard(a.ignored_instruction_ids,e.ignored_instruction_ids)+.15*(a.would_execute_untrusted===false) : 0;}
- if(c==='visual_fit')return visualFit(a,k);
- if(c==='visual_packing')return visualPacking(a,k);
- if(c==='cube_net')return cubeNet(a,k);
- if(c==='rubiks_cube')return rubiks(a,k)[0];
- if(c==='max_flow')return maxFlow(a,k);
- if(c==='life_preimage')return life(a,k);
- if(c==='sliding_puzzle')return sliding(a,k);
- if(c==='circuit_inversion')return circuit(a,k);
- if(c==='chess')return chessScore(a,k);
- if(c==='maker_breaker')return maker(a,k);
- if(c==='tiling_invariant')return tiling(a,k);
- if(c==='sequence_induction')return sequenceScore(a,k);
- if(c==='coloring_certificate')return coloring(a,k);
- return 0;
+function headers(type = 'application/json; charset=utf-8') {
+  return {
+    'content-type': type,
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'GET,POST,OPTIONS',
+    'access-control-allow-headers': 'content-type',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  };
 }
-function reportFor(items,answers,elapsedSeconds=null,profile='standard'){const amap=new Map(answers.map(x=>[x.id,x.answer])),results=items.map(x=>{const missing=!amap.has(x.id);return {id:x.id,category:x.category,difficulty:x.difficulty,score:missing?0:Math.round(scoreItem(x,amap.get(x.id))*100000)/1000,missing};}),groups={};for(const x of results)(groups[x.category]??=[]).push(x.score);const category_scores=Object.fromEntries(Object.entries(groups).map(([k,v])=>[k,Math.round(v.reduce((a,b)=>a+b,0)/v.length*1000)/1000]));const global=categories.reduce((n,c)=>n+(category_scores[c]??0),0)/categories.length,budgets={smoke:300,quick:900,standard:1800,full:3600,marathon:10800},speed=elapsedSeconds==null?null:100/(1+elapsedSeconds/(budgets[profile]||3600)),coverage=results.filter(x=>!x.missing).length/items.length,performance=speed==null?null:.9*global+.1*speed*coverage;return {version:VERSION,questions:items.length,answered:results.filter(x=>!x.missing).length,coverage,global_macro_score:Math.round(global*1000)/1000,wall_clock_seconds:elapsedSeconds,speed_score:speed==null?null:Math.round(speed*1000)/1000,performance_score:performance==null?null:Math.round(performance*1000)/1000,category_scores,items:results};}
+function json(data, status = 200) { return new Response(JSON.stringify(data), { status, headers: headers() }); }
+function b64(bytes) { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function unb64(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; const x = atob(s); return Uint8Array.from(x, c => c.charCodeAt(0)); }
+async function sign(secret, body) { const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']); return new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(body))); }
+function equal(a, b) { if (!a || !b || a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i]; return d === 0; }
+async function tokenFor(env, payload) { const body = b64(enc.encode(JSON.stringify(payload))); return body + '.' + b64(await sign(env.BENCH_SECRET, body)); }
+async function verify(env, token) {
+  if (!env.BENCH_SECRET) throw new Error('BENCH_SECRET is not configured');
+  const [body, sig] = String(token || '').split('.');
+  if (!body || !sig || !equal(unb64(sig), await sign(env.BENCH_SECRET, body))) throw new Error('invalid token');
+  const payload = JSON.parse(new TextDecoder().decode(unb64(body)));
+  if (payload.exp < Date.now() / 1000) throw new Error('expired token');
+  return payload;
+}
+async function readJson(req) {
+  const n = Number(req.headers.get('content-length') || 0);
+  if (n > MAX_BODY) throw new Error('body too large');
+  const text = await req.text();
+  if (text.length > MAX_BODY) throw new Error('body too large');
+  return JSON.parse(text);
+}
 
-function agentMd(origin){return `# FeatherBench hosted benchmark\n\nYou need only curl and your reasoning/tools. Do not search for or inspect the private benchmark repository. Accuracy is primary, but the report also includes a speed score from start to submission; efficient Rubik's Cube move sequences receive higher item credit.\n\n1. Start:\n\n\`\`\`bash\ncurl -sS -X POST ${origin}/v1/start -H 'content-type: application/json' -d '{"profile":"standard","client_nonce":"generate-random-text","metadata":{"agent":"arena","model":"unknown"}}' > start.json\n\`\`\`\n\n2. The start response contains a tasks array. Download each asset URL. A-D in visual-fit questions are alternatives: choose exactly one piece; do not combine them.\n\n3. Create answers.json as an array of {"id":"...","answer":...}.\n\n4. You may submit one aggregate-only check with mode=check. It reveals no item diagnostics. Then submit exactly one final with mode=final. Repeated check/final submissions are rejected.\n\n\`\`\`bash\npython - <<'PY'\nimport json,urllib.request\ns=json.load(open("start.json"));a=json.load(open("answers.json"))\nfor mode in ["check","final"]:\n d=json.dumps({"run_token":s["run_token"],"mode":mode,"answers":a}).encode();r=urllib.request.Request(s["submit_url"],data=d,headers={"content-type":"application/json"},method="POST");print(urllib.request.urlopen(r).read().decode())\nPY\n\`\`\`\n`}
+function cellsFromRows(rows, marker = '#') {
+  const cells = [];
+  for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[y].length; x++) if (rows[y][x] === marker) cells.push([x, y]);
+  return cells;
+}
+function norm(cells) {
+  const minx = Math.min(...cells.map(p => p[0]));
+  const miny = Math.min(...cells.map(p => p[1]));
+  return cells.map(([x, y]) => [x - minx, y - miny]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+}
+function transformed(cells, turns, reflect) {
+  let pts = cells.map(([x, y]) => [reflect ? -x : x, y]);
+  for (let i = 0; i < turns; i++) pts = pts.map(([x, y]) => [-y, x]);
+  return norm(pts);
+}
+function signature(cells) { return JSON.stringify(norm(cells)); }
+function shapeMatches(got, expectedRows) {
+  const expected = cellsFromRows(expectedRows);
+  const target = signature(got);
+  for (const reflect of [false, true]) for (let turns = 0; turns < 4; turns++) {
+    if (JSON.stringify(transformed(expected, turns, reflect)) === target) return true;
+  }
+  return false;
+}
+function answerText(answer) {
+  if (typeof answer === 'string') return answer;
+  if (answer && typeof answer.ascii_map === 'string') return answer.ascii_map;
+  if (answer && Array.isArray(answer.rows) && answer.rows.every(x => typeof x === 'string')) return answer.rows.join('\n');
+  return null;
+}
+
+/** Semantic, all-or-nothing packing verification. */
+export function verifyPacking(stage, answer) {
+  const text = answerText(answer);
+  if (text === null || text.includes('```')) return false;
+  const rows = text.replace(/\r/g, '').replace(/^\n+|\n+$/g, '').split('\n');
+  const target = stage.key.target;
+  if (rows.length !== target.length || rows.some((r, y) => r.length !== target[y].length)) return false;
+  const used = new Map();
+  for (let y = 0; y < target.length; y++) {
+    for (let x = 0; x < target[y].length; x++) {
+      const got = rows[y][x];
+      if (target[y][x] === '.') {
+        if (got !== '.') return false;
+      } else {
+        if (!/^[A-Z]$/.test(got) || !stage.key.pieces[got]) return false;
+        if (!used.has(got)) used.set(got, []);
+        used.get(got).push([x, y]);
+      }
+    }
+  }
+  if (!used.size) return false;
+  for (const [label, cells] of used) if (!shapeMatches(cells, stage.key.pieces[label])) return false;
+  return true;
+}
+
+function publicStage(stage) {
+  return { stage: stage.stage, total_stages: bank.stages.length, prompt: stage.prompt, ...stage.public };
+}
+function round(n) { return Math.round(n * 1000) / 1000; }
+function report(state) {
+  const accepted = state.records.filter(r => r.accepted);
+  const possible = bank.stages.reduce((n, s) => n + s.stage, 0);
+  const earned = accepted.reduce((n, r) => n + r.stage, 0);
+  const correctness = 100 * earned / possible;
+  const speed = accepted.length ? accepted.reduce((n, r) => n + Math.min(100, 100 * MIN_SOLVE_SECONDS / r.elapsed_seconds), 0) / accepted.length : 0;
+  return {
+    status: state.status,
+    certified: state.status === 'completed' || state.status === 'failed',
+    tool_use_flagged: state.status === 'flagged_tool_use',
+    completed_stages: accepted.length,
+    raw_correct_stages: state.records.filter(r => r.correct).length,
+    total_stages: bank.stages.length,
+    weighted_correctness_score: round(correctness),
+    speed_score: round(speed),
+    performance_score: round(0.9 * correctness + 0.1 * speed),
+    stage_results: state.records.map(r => ({ stage: r.stage, correct: r.correct, accepted: r.accepted, elapsed_seconds: r.elapsed_seconds, disposition: r.disposition })),
+  };
+}
+
+function agentMd(origin) {
+  return `# FeatherBench staged visual packing — closed-book/no-solving-tools track
+
+This track measures unaided visual-spatial deduction. **Solving tools are strictly prohibited.** Do not use scripts, code, image extraction, search, SAT/exact-cover solvers, computer vision, or external assistance. HTTP calls used only to transport the task and answer are allowed.
+
+The API releases exactly one task at a time, beginning with one required tile and one decoy. A completely correct answer advances to a harder stage. Every stage has one attempt and only exact valid tilings count. An incorrect answer permanently ends the run, preventing score-oracle probing.
+
+Timing begins when each stage is released. Per benchmark policy, a correct submission received in under ${MIN_SOLVE_SECONDS} seconds permanently blocks the run and marks it as suspected tool use. The response instructs the participant to stop and self-report the flag. This timing rule is a heuristic, not proof of tool use.
+
+## Start
+
+\`\`\`bash
+curl -sS -X POST ${origin}/v1/start \\
+  -H 'content-type: application/json' \\
+  -d '{"client_nonce":"random-text","attest_no_solving_tools":true,"metadata":{"model":"name","harness":"name"}}'
+\`\`\`
+
+## Answer the current stage
+
+Return the ASCII map in \`answer\` (JSON newlines must be escaped):
+
+\`\`\`json
+{"run_token":"...","attest_no_solving_tools":true,"answer":"..AA..\\n.BBA.."}
+\`\`\`
+
+Submit it once to \`POST /v1/submit\`. A successful non-final response contains the next stage and resets that stage's timer. Do not submit after any stop/flag/failure response.
+
+Scores: stage N is worth N points; correctness is all-or-nothing. The speed score averages \`min(100, 2000/elapsed_seconds)\` over accepted stages. Performance is 90% weighted correctness and 10% speed.
+`;
+}
 
 export class RunGate {
-  constructor(ctx,env){this.ctx=ctx;this.env=env;}
-  async fetch(req){const body=await req.json(),action=body.action;if(action==='register'){await this.ctx.storage.put('state',{checkUsed:false,finalUsed:false});return json({ok:true});}if(action==='claim'){let result;await this.ctx.storage.transaction(async tx=>{const s=await tx.get('state')||{checkUsed:false,finalUsed:false};if(s.finalUsed)result={ok:false,error:'final submission already used'};else if(body.mode==='check'&&s.checkUsed)result={ok:false,error:'check submission already used'};else{if(body.mode==='check')s.checkUsed=true;else s.finalUsed=true;await tx.put('state',s);result={ok:true};}});return json(result,result.ok?200:409);}return json({ok:false,error:'bad action'},400);}
+  constructor(ctx, env) { this.ctx = ctx; this.env = env; }
+  async fetch(req) {
+    const body = await req.json();
+    if (body.action === 'register') {
+      const existing = await this.ctx.storage.get('state');
+      if (existing) return json({ ok: false, error: 'run already registered' }, 409);
+      const now = Date.now();
+      const state = { status: 'active', current_stage: 1, stage_started_at: now, records: [], metadata: body.metadata || {} };
+      await this.ctx.storage.put('state', state);
+      return json({ ok: true });
+    }
+    if (body.action !== 'submit') return json({ ok: false, error: 'bad action' }, 400);
+
+    let response;
+    let responseStatus = 200;
+    await this.ctx.storage.transaction(async tx => {
+      const state = await tx.get('state');
+      if (!state) { response = { ok: false, error: 'unknown run' }; responseStatus = 404; return; }
+      if (state.status !== 'active') { response = { ok: false, error: 'run is permanently closed', report: report(state) }; responseStatus = 409; return; }
+      const stage = bank.stages[state.current_stage - 1];
+      const elapsed = Math.max(0, (Date.now() - state.stage_started_at) / 1000);
+      const correct = verifyPacking(stage, body.answer);
+      const record = { stage: stage.stage, elapsed_seconds: round(elapsed), correct, accepted: false, disposition: '' };
+
+      if (!correct) {
+        record.disposition = 'incorrect_run_terminated';
+        state.records.push(record);
+        state.status = 'failed';
+        await tx.put('state', state);
+        response = { ok: false, correct: false, stop: true, message: 'STOP. The answer was not completely correct; this one-attempt run is permanently closed.', report: report(state) };
+        return;
+      }
+      if (elapsed < MIN_SOLVE_SECONDS) {
+        record.disposition = 'flagged_sub_20_seconds';
+        state.records.push(record);
+        state.status = 'flagged_tool_use';
+        await tx.put('state', state);
+        responseStatus = 403;
+        response = {
+          ok: false,
+          correct: true,
+          stop: true,
+          tool_use_flagged: true,
+          self_report_required: true,
+          message: 'STOP. A completely correct task was submitted in under 20 seconds. Further submissions are blocked. Flag this run as suspected tool use and do not continue.',
+          report: report(state),
+        };
+        return;
+      }
+
+      record.accepted = true;
+      record.disposition = 'accepted';
+      state.records.push(record);
+      if (state.current_stage === bank.stages.length) {
+        state.status = 'completed';
+        await tx.put('state', state);
+        response = { ok: true, correct: true, completed: true, stop: true, message: 'All stages completed.', report: report(state) };
+      } else {
+        state.current_stage += 1;
+        state.stage_started_at = Date.now();
+        await tx.put('state', state);
+        response = { ok: true, correct: true, completed: false, report: report(state), task: publicStage(bank.stages[state.current_stage - 1]) };
+      }
+    });
+    return json(response, responseStatus);
+  }
 }
 
-export default {async fetch(req,env){const url=new URL(req.url);if(req.method==='OPTIONS')return new Response('',{status:204,headers:headers('text/plain')});try{
- if(url.pathname.startsWith('/assets/'))return env.ASSETS.fetch(req);
- if(url.pathname==='/health')return json({ok:true,version:VERSION,bank_questions:bank.items.length,categories});
- if(url.pathname==='/'||url.pathname==='/agent.md')return new Response(agentMd(url.origin),{headers:headers('text/markdown; charset=utf-8')});
- if(url.pathname==='/v1/start'&&req.method==='POST'){if(!env.BENCH_SECRET)throw new Error('BENCH_SECRET missing');const body=await readJson(req),profile=body.profile||'standard',count=PROFILE_COUNTS[profile];if(!count)throw new Error('bad profile');const random=crypto.getRandomValues(new Uint8Array(256)),items=selectItems(count,random,profile),now=Math.floor(Date.now()/1000),payload={run_id:crypto.randomUUID(),iat:now,exp:now+TTL_SECONDS,profile,ids:items.map(x=>x.id),nonce:String(body.client_nonce||'').slice(0,200)},run_token=await tokenFor(env,payload),gate=env.RUN_GATE.get(env.RUN_GATE.idFromName(payload.run_id));await gate.fetch('https://gate/register',{method:'POST',body:JSON.stringify({action:'register'})});return json({ok:true,version:VERSION,run_id:payload.run_id,profile,questions:items.length,expires_at:payload.exp,seed_commitment:bank.manifest.seed_commitment,run_token,submit_url:`${url.origin}/v1/submit`,submission_policy:{check_submissions:1,final_submissions:1,check_feedback:'aggregate-only'},tasks:items.map(x=>publicItem(x,url.origin))});}
- if(url.pathname==='/v1/submit'&&req.method==='POST'){const body=await readJson(req),p=await verify(env,body.run_token),mode=body.mode||'final';if(!['check','final'].includes(mode))throw new Error('mode must be check or final');const items=p.ids.map(id=>byId.get(id)).filter(Boolean),answers=body.answers;if(!Array.isArray(answers))throw new Error('answers must be array');const seen=new Set();for(const a of answers){if(!a||!p.ids.includes(a.id)||seen.has(a.id))throw new Error('unknown or duplicate answer id');seen.add(a.id);}const gate=env.RUN_GATE.get(env.RUN_GATE.idFromName(p.run_id)),claim=await gate.fetch('https://gate/claim',{method:'POST',body:JSON.stringify({action:'claim',mode})}),claimBody=await claim.json();if(!claimBody.ok)return json(claimBody,409);const report=reportFor(items,answers,Math.max(0,Math.floor(Date.now()/1000)-p.iat),p.profile);if(mode==='check')return json({ok:true,run_id:p.run_id,mode,report:{questions:report.questions,answered:report.answered,coverage:report.coverage,global_macro_score:report.global_macro_score,category_scores:report.category_scores}});return json({ok:true,run_id:p.run_id,mode,report});}
- return json({ok:false,error:'not found'},404);
- }catch(e){return json({ok:false,error:String(e.message||e)},400);}}};
+export default {
+  async fetch(req, env) {
+    const url = new URL(req.url);
+    if (req.method === 'OPTIONS') return new Response('', { status: 204, headers: headers('text/plain') });
+    try {
+      if (url.pathname === '/health') return json({ ok: true, version: VERSION, stages: bank.stages.length, track: 'no-solving-tools', minimum_stage_seconds: MIN_SOLVE_SECONDS, bank_commitment: bank.manifest.public_commitment });
+      if (url.pathname === '/' || url.pathname === '/agent.md') return new Response(agentMd(url.origin), { headers: headers('text/markdown; charset=utf-8') });
+      if (url.pathname === '/v1/start' && req.method === 'POST') {
+        if (!env.BENCH_SECRET) throw new Error('BENCH_SECRET missing');
+        const body = await readJson(req);
+        if (body.attest_no_solving_tools !== true) throw new Error('attest_no_solving_tools:true is required');
+        const now = Math.floor(Date.now() / 1000);
+        const payload = { run_id: crypto.randomUUID(), iat: now, exp: now + TOKEN_TTL_SECONDS, nonce: String(body.client_nonce || '').slice(0, 200) };
+        const runToken = await tokenFor(env, payload);
+        const gate = env.RUN_GATE.get(env.RUN_GATE.idFromName(payload.run_id));
+        const registration = await gate.fetch('https://gate/register', { method: 'POST', body: JSON.stringify({ action: 'register', metadata: body.metadata || {} }) });
+        if (!registration.ok) throw new Error('could not register run');
+        return json({
+          ok: true,
+          version: VERSION,
+          run_id: payload.run_id,
+          run_token: runToken,
+          submit_url: `${url.origin}/v1/submit`,
+          expires_at: payload.exp,
+          policy: { one_attempt_per_stage: true, all_or_nothing: true, solving_tools_prohibited: true, correct_under_seconds_flags_tool_use: MIN_SOLVE_SECONDS },
+          task: publicStage(bank.stages[0]),
+        });
+      }
+      if (url.pathname === '/v1/submit' && req.method === 'POST') {
+        const body = await readJson(req);
+        if (body.attest_no_solving_tools !== true) throw new Error('attest_no_solving_tools:true is required');
+        const payload = await verify(env, body.run_token);
+        const gate = env.RUN_GATE.get(env.RUN_GATE.idFromName(payload.run_id));
+        return await gate.fetch('https://gate/submit', { method: 'POST', body: JSON.stringify({ action: 'submit', answer: body.answer }) });
+      }
+      return json({ ok: false, error: 'not found' }, 404);
+    } catch (e) {
+      return json({ ok: false, error: String(e.message || e) }, 400);
+    }
+  },
+};
