@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import bank from '../src/bank.json' with { type: 'json' };
-import worker, { RunGate, verifyPacking } from '../src/index.js';
+import worker, { RunGate, validConversationCode, verifyPacking } from '../src/index.js';
 
 class Storage {
   constructor() { this.m = new Map(); }
@@ -16,6 +16,18 @@ for (const path of ['/agent.md', '/health']) {
   assert.equal(/20\s*seconds?|timer|minimum[_ -]?stage|speed.integrity.threshold|2000\s*\//i.test(publicText), false, `private clock leaked at ${path}`);
 }
 
+const CODE = '019f6bde-edae-7305-a9b2-6dec6ff62989';
+assert.equal(validConversationCode(CODE), true);
+assert.equal(validConversationCode('019F6BDE-EDAE-7305-A9B2-6DEC6FF62989'), false);
+assert.equal(validConversationCode('not-a-code'), false);
+
+// Missing codes are rejected before a run is created and instruct the model to ask its user.
+let missingCodeResponse = await worker.fetch(new Request('https://bench.test/v1/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ attest_no_solving_tools: true }) }), {});
+let missingCodeBody = await missingCodeResponse.json();
+assert.equal(missingCodeResponse.status, 400);
+assert.equal(missingCodeBody.needs_conversation_code, true);
+assert.match(missingCodeBody.action_for_model, /(ask.*user|user.*ask)/i);
+
 const refs = bank.stages.map(s => s.key.reference_map.join('\n'));
 for (let i = 0; i < bank.stages.length; i++) {
   assert.equal(verifyPacking(bank.stages[i], refs[i]), true, `reference stage ${i + 1}`);
@@ -27,7 +39,7 @@ assert.equal(verifyPacking(bank.stages[0], '```\n' + refs[0] + '\n```'), false, 
 // Correct after >=20 seconds advances exactly one stage.
 const storage = new Storage();
 const gate = new RunGate({ storage }, {});
-let r = await gate.fetch(new Request('https://gate/register', { method: 'POST', body: JSON.stringify({ action: 'register' }) }));
+let r = await gate.fetch(new Request('https://gate/register', { method: 'POST', body: JSON.stringify({ action: 'register', conversation_code: CODE }) }));
 assert.equal(r.status, 200);
 let state = await storage.get('state');
 state.stage_started_at -= 21_000;
@@ -41,7 +53,7 @@ assert.equal(body.report.completed_stages, 1);
 // Stages 1–3 are timer-exempt; a correct sub-20-second stage 4 is flagged.
 const fastStorage = new Storage();
 const fastGate = new RunGate({ storage: fastStorage }, {});
-await fastGate.fetch(new Request('https://gate/register', { method: 'POST', body: JSON.stringify({ action: 'register' }) }));
+await fastGate.fetch(new Request('https://gate/register', { method: 'POST', body: JSON.stringify({ action: 'register', conversation_code: CODE }) }));
 for (let i = 0; i < 3; i++) {
   r = await fastGate.fetch(new Request('https://gate/submit', { method: 'POST', body: JSON.stringify({ action: 'submit', answer: refs[i] }) }));
   body = await r.json();
@@ -60,15 +72,18 @@ assert.equal(r.status, 409);
 // An incorrect attempt ends the run and gives no geometric oracle detail.
 const badStorage = new Storage();
 const badGate = new RunGate({ storage: badStorage }, {});
-await badGate.fetch(new Request('https://gate/register', { method: 'POST', body: JSON.stringify({ action: 'register' }) }));
-state = await badStorage.get('state');
-state.stage_started_at -= 21_000;
-await badStorage.put('state', state);
+await badGate.fetch(new Request('https://gate/register', { method: 'POST', body: JSON.stringify({ action: 'register', conversation_code: CODE }) }));
+await badGate.fetch(new Request('https://gate/submit', { method: 'POST', body: JSON.stringify({ action: 'submit', answer: refs[0] }) }));
 r = await badGate.fetch(new Request('https://gate/submit', { method: 'POST', body: JSON.stringify({ action: 'submit', answer: 'wrong' }) }));
 body = await r.json();
 assert.equal(body.correct, false);
 assert.equal(body.stop, true);
 assert.equal(body.report.status, 'failed');
+assert.equal(body.report.completed_stages, 1, 'previous accepted stage remains scored');
+assert.equal(body.report.conversation_code, CODE);
+state = await badStorage.get('state');
+assert.equal(state.conversation_code, CODE, 'conversation code persisted in Durable Object storage');
+assert.equal(state.scores.completed_stages, 1, 'scores persisted alongside conversation code');
 assert.equal(JSON.stringify(body).includes('reference_map'), false);
 
 console.log(`ok: ${bank.stages.length} staged packing tasks and protocol invariants`);

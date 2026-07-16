@@ -4,13 +4,17 @@ This private Cloudflare Worker runs an eight-stage, all-or-nothing visual-packin
 
 ## Protocol
 
-- `POST /v1/start` returns stage 1 only.
+- `POST /v1/start` requires a caller-supplied canonical lowercase UUID `conversation_code` and returns stage 1 only. If absent, the API tells the model to ask its user for the code rather than inventing one.
+- Models are instructed to push as far through the stages as possible.
+- Previously accepted stages remain scored if a later answer is wrong.
 - Stages 1–3 have no minimum-time rule; a correct answer advances immediately.
 - Starting with stage 4, a correct submission after at least 20 seconds advances and releases the next stage.
 - Every stage allows one attempt. An incorrect answer permanently ends the run.
 - Starting with stage 4, a completely correct answer received in under 20 seconds permanently blocks the run, sets `tool_use_flagged:true`, and instructs the participant to stop and self-report.
 - Only complete geometrically valid ASCII tilings count. The verifier accepts rotations, reflections, decoy omission, and any semantically valid packing rather than comparing against one literal map.
 - Stage N is worth N correctness points. Performance is 90% weighted correctness plus 10% speed.
+
+Each run's `conversation_code`, stage records, and latest score snapshot are persisted together in that run's SQLite-backed Cloudflare Durable Object storage.
 
 The no-tools requirement is an attested closed-book track. The timing flag is only a heuristic: it cannot technically prove tool use, and a dishonest participant can wait. Conversely, a genuinely fast model can be falsely flagged. Report it as **suspected tool use**, never as proof.
 
@@ -48,7 +52,7 @@ POST /v1/submit
 Start body:
 
 ```json
-{"client_nonce":"random","attest_no_solving_tools":true,"metadata":{"model":"...","harness":"..."}}
+{"conversation_code":"019f6bde-edae-7305-a9b2-6dec6ff62989","client_nonce":"random","attest_no_solving_tools":true,"metadata":{"model":"...","harness":"..."}}
 ```
 
 Submit body:
