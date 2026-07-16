@@ -5,9 +5,10 @@ This private Cloudflare Worker runs an eight-stage, all-or-nothing visual-packin
 ## Protocol
 
 - `POST /v1/start` returns stage 1 only.
-- A correct submission after at least 20 seconds advances and releases the next stage.
+- Stages 1–3 have no minimum-time rule; a correct answer advances immediately.
+- Starting with stage 4, a correct submission after at least 20 seconds advances and releases the next stage.
 - Every stage allows one attempt. An incorrect answer permanently ends the run.
-- A completely correct answer received in under 20 seconds permanently blocks the run, sets `tool_use_flagged:true`, and instructs the participant to stop and self-report.
+- Starting with stage 4, a completely correct answer received in under 20 seconds permanently blocks the run, sets `tool_use_flagged:true`, and instructs the participant to stop and self-report.
 - Only complete geometrically valid ASCII tilings count. The verifier accepts rotations, reflections, decoy omission, and any semantically valid packing rather than comparing against one literal map.
 - Stage N is worth N correctness points. Performance is 90% weighted correctness plus 10% speed.
 

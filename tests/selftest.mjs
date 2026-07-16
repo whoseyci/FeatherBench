@@ -31,16 +31,23 @@ assert.equal(body.ok, true);
 assert.equal(body.task.stage, 2);
 assert.equal(body.report.completed_stages, 1);
 
-// A correct sub-20-second solution is flagged and permanently closed.
+// Stages 1–3 are timer-exempt; a correct sub-20-second stage 4 is flagged.
 const fastStorage = new Storage();
 const fastGate = new RunGate({ storage: fastStorage }, {});
 await fastGate.fetch(new Request('https://gate/register', { method: 'POST', body: JSON.stringify({ action: 'register' }) }));
-r = await fastGate.fetch(new Request('https://gate/submit', { method: 'POST', body: JSON.stringify({ action: 'submit', answer: refs[0] }) }));
+for (let i = 0; i < 3; i++) {
+  r = await fastGate.fetch(new Request('https://gate/submit', { method: 'POST', body: JSON.stringify({ action: 'submit', answer: refs[i] }) }));
+  body = await r.json();
+  assert.equal(r.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.task.stage, i + 2);
+}
+r = await fastGate.fetch(new Request('https://gate/submit', { method: 'POST', body: JSON.stringify({ action: 'submit', answer: refs[3] }) }));
 body = await r.json();
 assert.equal(r.status, 403);
 assert.equal(body.tool_use_flagged, true);
 assert.equal(body.stop, true);
-r = await fastGate.fetch(new Request('https://gate/submit', { method: 'POST', body: JSON.stringify({ action: 'submit', answer: refs[0] }) }));
+r = await fastGate.fetch(new Request('https://gate/submit', { method: 'POST', body: JSON.stringify({ action: 'submit', answer: refs[3] }) }));
 assert.equal(r.status, 409);
 
 // An incorrect attempt ends the run and gives no geometric oracle detail.

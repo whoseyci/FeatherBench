@@ -3,6 +3,7 @@ import bank from './bank.json' with { type: 'json' };
 const VERSION = 'featherbench-packing-staged-cf-1.0';
 const TOKEN_TTL_SECONDS = 4 * 60 * 60;
 const MIN_SOLVE_SECONDS = 20;
+const TIMER_EXEMPT_STAGES = 3;
 const MAX_BODY = 256 * 1024;
 const enc = new TextEncoder();
 
@@ -125,7 +126,7 @@ This track measures unaided visual-spatial deduction. **Solving tools are strict
 
 The API releases exactly one task at a time, beginning with one required tile and one decoy. A completely correct answer advances to a harder stage. Every stage has one attempt and only exact valid tilings count. An incorrect answer permanently ends the run, preventing score-oracle probing.
 
-Timing begins when each stage is released. Per benchmark policy, a correct submission received in under ${MIN_SOLVE_SECONDS} seconds permanently blocks the run and marks it as suspected tool use. The response instructs the participant to stop and self-report the flag. This timing rule is a heuristic, not proof of tool use.
+Timing begins when each stage is released. Stages 1–${TIMER_EXEMPT_STAGES} have no minimum-time rule. Starting at stage ${TIMER_EXEMPT_STAGES + 1}, a correct submission received in under ${MIN_SOLVE_SECONDS} seconds permanently blocks the run and marks it as suspected tool use. The response instructs the participant to stop and self-report the flag. This timing rule is a heuristic, not proof of tool use.
 
 ## Start
 
@@ -182,7 +183,7 @@ export class RunGate {
         response = { ok: false, correct: false, stop: true, message: 'STOP. The answer was not completely correct; this one-attempt run is permanently closed.', report: report(state) };
         return;
       }
-      if (elapsed < MIN_SOLVE_SECONDS) {
+      if (stage.stage > TIMER_EXEMPT_STAGES && elapsed < MIN_SOLVE_SECONDS) {
         record.disposition = 'flagged_sub_20_seconds';
         state.records.push(record);
         state.status = 'flagged_tool_use';
@@ -223,7 +224,7 @@ export default {
     const url = new URL(req.url);
     if (req.method === 'OPTIONS') return new Response('', { status: 204, headers: headers('text/plain') });
     try {
-      if (url.pathname === '/health') return json({ ok: true, version: VERSION, stages: bank.stages.length, track: 'no-solving-tools', minimum_stage_seconds: MIN_SOLVE_SECONDS, bank_commitment: bank.manifest.public_commitment });
+      if (url.pathname === '/health') return json({ ok: true, version: VERSION, stages: bank.stages.length, track: 'no-solving-tools', minimum_stage_seconds: MIN_SOLVE_SECONDS, timer_exempt_stages: TIMER_EXEMPT_STAGES, bank_commitment: bank.manifest.public_commitment });
       if (url.pathname === '/' || url.pathname === '/agent.md') return new Response(agentMd(url.origin), { headers: headers('text/markdown; charset=utf-8') });
       if (url.pathname === '/v1/start' && req.method === 'POST') {
         if (!env.BENCH_SECRET) throw new Error('BENCH_SECRET missing');
@@ -242,7 +243,7 @@ export default {
           run_token: runToken,
           submit_url: `${url.origin}/v1/submit`,
           expires_at: payload.exp,
-          policy: { one_attempt_per_stage: true, all_or_nothing: true, solving_tools_prohibited: true, correct_under_seconds_flags_tool_use: MIN_SOLVE_SECONDS },
+          policy: { one_attempt_per_stage: true, all_or_nothing: true, solving_tools_prohibited: true, timer_exempt_stages: TIMER_EXEMPT_STAGES, correct_under_seconds_flags_tool_use_from_stage: { seconds: MIN_SOLVE_SECONDS, first_stage: TIMER_EXEMPT_STAGES + 1 } },
           task: publicStage(bank.stages[0]),
         });
       }
