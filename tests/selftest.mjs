@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import bank from '../src/bank.json' with { type: 'json' };
-import worker, { RunGate, validConversationCode, verifyPacking } from '../src/index.js';
+import worker, { RunGate, isArenaRun, validConversationCode, verifyPacking } from '../src/index.js';
 
 class Storage {
   constructor() { this.m = new Map(); }
@@ -21,13 +21,20 @@ const CODE = '019f6bde-edae-7305-a9b2-6dec6ff62989';
 assert.equal(validConversationCode(CODE), true);
 assert.equal(validConversationCode('019F6BDE-EDAE-7305-A9B2-6DEC6FF62989'), false);
 assert.equal(validConversationCode('not-a-code'), false);
+assert.equal(isArenaRun({ platform: 'arena.ai' }), true);
+assert.equal(isArenaRun({ harness: 'Arena' }), true);
+assert.equal(isArenaRun({ platform: 'other' }), false);
 
-// Missing codes are rejected before a run is created and instruct the model to ask its user.
-let missingCodeResponse = await worker.fetch(new Request('https://bench.test/v1/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ attest_no_solving_tools: true }) }), {});
+// Missing codes are required only for Arena.ai and instruct that model to ask its user.
+let missingCodeResponse = await worker.fetch(new Request('https://bench.test/v1/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ attest_no_solving_tools: true, metadata: { platform: 'arena.ai' } }) }), {});
 let missingCodeBody = await missingCodeResponse.json();
 assert.equal(missingCodeResponse.status, 400);
 assert.equal(missingCodeBody.needs_conversation_code, true);
 assert.match(missingCodeBody.action_for_model, /(ask.*user|user.*ask)/i);
+const externalNoCodeResponse = await worker.fetch(new Request('https://bench.test/v1/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ attest_no_solving_tools: true, metadata: { platform: 'other', model: 'ExternalModel' } }) }), {});
+const externalNoCodeBody = await externalNoCodeResponse.json();
+assert.equal(externalNoCodeBody.needs_conversation_code, undefined);
+assert.match(externalNoCodeBody.error, /BENCH_SECRET/);
 
 const refs = bank.stages.map(s => s.key.reference_map.join('\n'));
 for (let i = 0; i < bank.stages.length; i++) {
@@ -82,22 +89,31 @@ assert.equal(body.stop, true);
 assert.equal(body.report.status, 'failed');
 assert.equal(body.report.completed_stages, 1, 'previous accepted stage remains scored');
 assert.equal(body.report.conversation_code, CODE);
+assert.equal(body.report.model, CODE, 'conversation code is used as the graph model label');
+assert.equal(body.report.harness, 'unknown');
 state = await badStorage.get('state');
 assert.equal(state.conversation_code, CODE, 'conversation code persisted in Durable Object storage');
 assert.equal(state.scores.completed_stages, 1, 'scores persisted alongside conversation code');
 assert.equal(JSON.stringify(body).includes('reference_map'), false);
 
-// The shared SQLite-backed Durable Object index powers /graph without exposing conversation codes.
+const externalStorage = new Storage();
+const externalGate = new RunGate({ storage: externalStorage }, {});
+await externalGate.fetch(new Request('https://gate/register', { method: 'POST', body: JSON.stringify({ action: 'register', conversation_code: null, metadata: { model: 'ExternalModel', harness: 'custom' } }) }));
+r = await externalGate.fetch(new Request('https://gate/submit', { method: 'POST', body: JSON.stringify({ action: 'submit', answer: refs[0] }) }));
+body = await r.json();
+assert.equal(body.report.model, 'ExternalModel', 'non-Arena run falls back to metadata.model');
+assert.equal(body.report.harness, 'custom');
+
+// The shared SQLite-backed Durable Object index powers /graph.
 const leaderboardStorage = new Storage();
 const leaderboardGate = new RunGate({ storage: leaderboardStorage }, {});
-r = await leaderboardGate.fetch(new Request('https://leaderboard/record', { method: 'POST', body: JSON.stringify({ action: 'record_result', record: { run_id: 'run-1', conversation_code: CODE, model: 'GraphModel', harness: 'manual', status: 'failed', highest_solved_stage: 3, total_time_seconds: 91.5, weighted_correctness_score: 16.667, speed_score: 50, performance_score: 20, updated_at: '2026-07-16T12:00:00Z' } }) }));
+r = await leaderboardGate.fetch(new Request('https://leaderboard/record', { method: 'POST', body: JSON.stringify({ action: 'record_result', record: { run_id: 'run-1', conversation_code: CODE, model: CODE, harness: 'manual', status: 'failed', highest_solved_stage: 3, total_time_seconds: 91.5, weighted_correctness_score: 16.667, speed_score: 50, performance_score: 20, updated_at: '2026-07-16T12:00:00Z' } }) }));
 assert.equal(r.status, 200);
 const graphEnv = { RUN_GATE: { idFromName: name => name, get: () => ({ fetch: (url, init) => leaderboardGate.fetch(new Request(url, init)) }) } };
 r = await worker.fetch(new Request('https://bench.test/graph'), graphEnv);
 const graphText = await r.text();
 assert.equal(r.status, 200);
-assert.match(graphText, /GraphModel/);
+assert.match(graphText, new RegExp(CODE));
 assert.match(graphText, /Highest solved puzzle/);
-assert.equal(graphText.includes(CODE), false, 'public graph must not expose conversation code');
 
 console.log(`ok: ${bank.stages.length} staged packing tasks, persistence, and graph invariants`);

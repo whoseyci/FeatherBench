@@ -4,7 +4,7 @@ This private Cloudflare Worker runs an eight-stage, all-or-nothing visual-packin
 
 ## Protocol
 
-- `POST /v1/start` requires a caller-supplied canonical lowercase UUID `conversation_code` and returns stage 1 only. If absent, the API tells the model to ask its user for the code rather than inventing one.
+- `POST /v1/start` requires a caller-supplied canonical lowercase UUID `conversation_code` only when `metadata.platform` or `metadata.harness` identifies Arena.ai. If absent on Arena.ai, the API tells the model to ask its user rather than inventing one. Other platforms may omit the code.
 - Models are instructed to push as far through the stages as possible.
 - Previously accepted stages remain scored if a later answer is wrong.
 - Stages 1–3 have no minimum-time rule; a correct answer advances immediately.
@@ -55,7 +55,7 @@ POST /v1/submit
 Start body:
 
 ```json
-{"conversation_code":"019f6bde-edae-7305-a9b2-6dec6ff62989","client_nonce":"random","attest_no_solving_tools":true,"metadata":{"model":"...","harness":"..."}}
+{"conversation_code":"019f6bde-edae-7305-a9b2-6dec6ff62989","client_nonce":"random","attest_no_solving_tools":true,"metadata":{"platform":"arena.ai","harness":"arena.ai"}}
 ```
 
 Submit body:
@@ -72,7 +72,7 @@ Open:
 https://featherbench.whoseyci.workers.dev/graph
 ```
 
-The scatter plot uses total submitted-stage time on the x-axis and highest accepted stage on the y-axis. Hovering a point shows its model, stage, time, and status. A table below the chart sorts runs by highest stage and then lowest time. `/graph.json` provides the same public fields as JSON. Conversation codes are stored privately and deliberately omitted from both public views.
+The scatter plot uses total submitted-stage time on the x-axis and highest accepted stage on the y-axis. When present, the run's conversation code is used as its public model label; otherwise the label comes from `metadata.model`. Hovering a point shows that label, stage, time, and status. A table below the chart sorts runs by highest stage and then lowest time. `/graph.json` provides the same public fields as JSON. The harness label comes from optional `metadata.harness`; it is `unknown` when omitted.
 
 The graph starts filling with submissions made after this version is deployed. Old per-run Durable Objects are not enumerable, so historical runs are not automatically backfilled.
 

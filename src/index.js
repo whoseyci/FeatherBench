@@ -1,6 +1,6 @@
 import bank from './bank.json' with { type: 'json' };
 
-const VERSION = 'featherbench-packing-staged-cf-1.2';
+const VERSION = 'featherbench-packing-staged-cf-1.2.2';
 const TOKEN_TTL_SECONDS = 4 * 60 * 60;
 const MIN_SOLVE_SECONDS = 20;
 const TIMER_EXEMPT_STAGES = 3;
@@ -66,6 +66,11 @@ function shapeMatches(got, expectedRows) {
 export function validConversationCode(value) {
   return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 }
+export function isArenaRun(metadata) {
+  const platform = String(metadata?.platform || '').trim().toLowerCase();
+  const harness = String(metadata?.harness || '').trim().toLowerCase();
+  return platform === 'arena.ai' || platform === 'arena' || harness === 'arena.ai' || harness === 'arena';
+}
 function answerText(answer) {
   if (typeof answer === 'string') return answer;
   if (answer && typeof answer.ascii_map === 'string') return answer.ascii_map;
@@ -112,7 +117,7 @@ function report(state) {
   const highest = accepted.reduce((n, r) => Math.max(n, r.stage), 0);
   return {
     conversation_code: state.conversation_code,
-    model: String(state.metadata?.model || 'unknown').slice(0, 100),
+    model: String(state.conversation_code || state.metadata?.model || 'unknown').slice(0, 100),
     harness: String(state.metadata?.harness || 'unknown').slice(0, 100),
     status: state.status,
     certified: state.status === 'completed' || state.status === 'failed',
@@ -172,17 +177,21 @@ This track measures unaided visual-spatial deduction. **Solving tools are strict
 
 The API releases exactly one task at a time, beginning with one required tile and one decoy. **Push as far through the stages as you can.** A completely correct answer advances to a harder stage. Every stage has one attempt and only exact valid tilings count. An incorrect answer permanently ends the run, preventing score-oracle probing, but every previously accepted stage remains scored.
 
-## Conversation code required
+## Conversation code for Arena.ai runs
 
-A conversation code in canonical lowercase UUID form is required, for example \`019f6bde-edae-7305-a9b2-6dec6ff62989\`. It links the stored run record to the conversation. If the user has not provided a conversation code, **stop before starting the benchmark, turn back to the user, and post a question asking for their conversation code.** Do not invent one on the user's behalf.
+If you are currently running inside **Arena.ai**, set \`metadata.platform\` to \`arena.ai\` and provide the user's conversation code in canonical lowercase UUID form, for example \`019f6bde-edae-7305-a9b2-6dec6ff62989\`. If the Arena.ai user has not provided a code, **stop before starting, turn back to the user, and post a question asking for their conversation code.** Do not invent one. Outside Arena.ai, the conversation code is optional.
 
 ## Start
+
+Arena.ai example:
 
 \`\`\`bash
 curl -sS -X POST ${origin}/v1/start \\
   -H 'content-type: application/json' \\
-  -d '{"conversation_code":"019f6bde-edae-7305-a9b2-6dec6ff62989","client_nonce":"random-text","attest_no_solving_tools":true,"metadata":{"model":"name","harness":"name"}}'
+  -d '{"conversation_code":"019f6bde-edae-7305-a9b2-6dec6ff62989","client_nonce":"random-text","attest_no_solving_tools":true,"metadata":{"platform":"arena.ai","harness":"arena.ai"}}'
 \`\`\`
+
+Other platforms may omit \`conversation_code\` and should supply \`metadata.model\` and \`metadata.harness\` for graph labels.
 
 ## Answer the current stage
 
@@ -194,7 +203,7 @@ Return the ASCII map in \`answer\` (JSON newlines must be escaped):
 
 Submit it once to \`POST /v1/submit\`. A successful non-final response contains the next stage. Do not submit after any stop/flag/failure response.
 
-Scores: stage N is worth N points and correctness is all-or-nothing. The final report includes correctness, speed, and combined performance scores. Supply accurate \`metadata.model\` and \`metadata.harness\` values so the run is labeled correctly on the public results graph at ${origin}/graph.
+Scores: stage N is worth N points and correctness is all-or-nothing. The final report includes correctness, speed, and combined performance scores. When a conversation code is present it becomes the model label on ${origin}/graph; otherwise the graph uses \`metadata.model\`. The harness comes from optional \`metadata.harness\` and is \`unknown\` when omitted.
 `;
 }
 
@@ -298,21 +307,23 @@ export default {
       if (url.pathname === '/' || url.pathname === '/agent.md') return new Response(agentMd(url.origin), { headers: headers('text/markdown; charset=utf-8') });
       if (url.pathname === '/v1/start' && req.method === 'POST') {
         const body = await readJson(req);
-        if (!body.conversation_code) return json({ ok: false, needs_conversation_code: true, error: 'conversation_code is required', action_for_model: 'Turn back to the user and post a question asking for their conversation code. Do not invent one.' }, 400);
-        if (!validConversationCode(body.conversation_code)) return json({ ok: false, needs_conversation_code: true, error: 'conversation_code must use canonical lowercase UUID form, for example 019f6bde-edae-7305-a9b2-6dec6ff62989', action_for_model: 'Ask the user to provide or correct their conversation code.' }, 400);
+        const arenaRun = isArenaRun(body.metadata);
+        if (arenaRun && !body.conversation_code) return json({ ok: false, needs_conversation_code: true, error: 'conversation_code is required for Arena.ai runs', action_for_model: 'Turn back to the Arena.ai user and post a question asking for their conversation code. Do not invent one.' }, 400);
+        if (body.conversation_code && !validConversationCode(body.conversation_code)) return json({ ok: false, needs_conversation_code: arenaRun, error: 'conversation_code must use canonical lowercase UUID form, for example 019f6bde-edae-7305-a9b2-6dec6ff62989', action_for_model: arenaRun ? 'Ask the Arena.ai user to provide or correct their conversation code.' : 'Correct the optional conversation code or omit it.' }, 400);
         if (!env.BENCH_SECRET) throw new Error('BENCH_SECRET missing');
         if (body.attest_no_solving_tools !== true) throw new Error('attest_no_solving_tools:true is required');
         const now = Math.floor(Date.now() / 1000);
-        const payload = { run_id: crypto.randomUUID(), conversation_code: body.conversation_code, iat: now, exp: now + TOKEN_TTL_SECONDS, nonce: String(body.client_nonce || '').slice(0, 200) };
+        const conversationCode = body.conversation_code || null;
+        const payload = { run_id: crypto.randomUUID(), conversation_code: conversationCode, iat: now, exp: now + TOKEN_TTL_SECONDS, nonce: String(body.client_nonce || '').slice(0, 200) };
         const runToken = await tokenFor(env, payload);
         const gate = env.RUN_GATE.get(env.RUN_GATE.idFromName(payload.run_id));
-        const registration = await gate.fetch('https://gate/register', { method: 'POST', body: JSON.stringify({ action: 'register', conversation_code: body.conversation_code, metadata: body.metadata || {} }) });
+        const registration = await gate.fetch('https://gate/register', { method: 'POST', body: JSON.stringify({ action: 'register', conversation_code: conversationCode, metadata: body.metadata || {} }) });
         if (!registration.ok) throw new Error('could not register run');
         return json({
           ok: true,
           version: VERSION,
           run_id: payload.run_id,
-          conversation_code: body.conversation_code,
+          conversation_code: conversationCode,
           run_token: runToken,
           submit_url: `${url.origin}/v1/submit`,
           expires_at: payload.exp,
