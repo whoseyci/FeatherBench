@@ -38,6 +38,7 @@ assert.match(externalNoCodeBody.error, /BENCH_SECRET/);
 
 const refs = bank.stages.map(s => s.key.reference_map.join('\n'));
 for (let i = 0; i < bank.stages.length; i++) {
+  assert.match(bank.stages[i].prompt, /one optional plain-text file named notes\.txt/i, `notes exception stage ${i + 1}`);
   assert.equal(verifyPacking(bank.stages[i], refs[i]), true, `reference stage ${i + 1}`);
   assert.equal(verifyPacking(bank.stages[i], { rows: bank.stages[i].key.reference_map }), true, `row form stage ${i + 1}`);
   assert.equal(verifyPacking(bank.stages[i], refs[i].replace(/[A-Z]/, '.')), false, `missing cell stage ${i + 1}`);

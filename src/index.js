@@ -1,6 +1,6 @@
 import bank from './bank.json' with { type: 'json' };
 
-const VERSION = 'featherbench-packing-staged-cf-1.2.2';
+const VERSION = 'featherbench-packing-staged-cf-1.2.3';
 const TOKEN_TTL_SECONDS = 4 * 60 * 60;
 const MIN_SOLVE_SECONDS = 20;
 const TIMER_EXEMPT_STAGES = 3;
@@ -174,6 +174,8 @@ function agentMd(origin) {
   return `# FeatherBench staged visual packing — closed-book/no-solving-tools track
 
 This track measures unaided visual-spatial deduction. **Solving tools are strictly prohibited.** Do not use scripts, code, image extraction, search, SAT/exact-cover solvers, computer vision, or external assistance. HTTP calls used only to transport the task and answer are allowed.
+
+The sole workspace exception is one optional plain-text file named exactly \`notes.txt\`. You may write and reread your own reasoning notes there. Do not create or use any other workspace file, and do not execute, programmatically generate, or parse \`notes.txt\` with code.
 
 The API releases exactly one task at a time, beginning with one required tile and one decoy. **Push as far through the stages as you can.** A completely correct answer advances to a harder stage. Every stage has one attempt and only exact valid tilings count. An incorrect answer permanently ends the run, preventing score-oracle probing, but every previously accepted stage remains scored.
 

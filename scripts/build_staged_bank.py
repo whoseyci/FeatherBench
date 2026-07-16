@@ -148,6 +148,7 @@ def prompt_for(target_rows, shown, has_decoys):
     pool_rule = "One or more candidates may be decoys." if has_decoys else "Every candidate tile is used exactly once; there are no decoys in this stage."
     parts = [
         "Solve this purely by visual deduction and reasoning. Solving tools are strictly prohibited: do not use scripts, code, image extraction, search, SAT/exact-cover solvers, or external assistance. Transport-only API calls are allowed.",
+        "The only workspace exception is one optional plain-text file named notes.txt, used solely to write and reread your own reasoning notes. Do not create or use any other workspace file, and do not execute or parse notes.txt with code.",
         "Tiles may be rotated and flipped. " + pool_rule,
         "Return only an ASCII map with exactly the TARGET dimensions. Keep `.` outside the target and fill every `#` target cell with the uppercase letter of the tile covering it. Use each selected tile exactly once; do not add commentary or fences.",
         "",
@@ -271,7 +272,7 @@ def main():
     stages.append(maximum_stage())
     public_digest = hashlib.sha256(json.dumps([{"stage": x["stage"], "prompt": x["prompt"]} for x in stages], sort_keys=True).encode()).hexdigest()
     bank = {
-        "manifest": {"version": "featherbench-packing-staged-1.1", "stages": len(stages), "public_commitment": public_digest},
+        "manifest": {"version": "featherbench-packing-staged-1.2", "stages": len(stages), "public_commitment": public_digest},
         "stages": stages,
     }
     out = ROOT / "src" / "bank.json"

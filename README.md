@@ -23,7 +23,7 @@ The no-tools requirement is an attested closed-book track. The timing flag is on
 
 `src/bank.json` contains answer geometry and must remain private. Do not expose this repository or generator to evaluated models. Models receive only the deployed `/agent.md` and one staged task at a time.
 
-The allowed “no tools” exception is transport-only HTTP needed to call the API. Scripts, code, image extraction, search, computer vision, SAT/exact-cover solvers, and external assistance for solving are prohibited.
+The allowed “no tools” exceptions are transport-only HTTP needed to call the API and one optional plain-text workspace file named exactly `notes.txt`. The model may write and reread its own reasoning notes there. It may not create or use other workspace files, execute the notes file, generate or parse it with code, or use scripts, code, image extraction, search, computer vision, SAT/exact-cover solvers, or external assistance for solving.
 
 ## Build and test
 
