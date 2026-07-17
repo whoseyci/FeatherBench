@@ -127,6 +127,7 @@ assert.equal(graphData.records.find(x => x.model === CODE).highest_solved_stage,
 assert.equal(graphData.records.find(x => x.model === CODE).status, 'max_stage_pending_review');
 assert.equal(graphData.records.find(x => x.model === CODE).model_url, `https://arena.ai/agent/${CODE}`);
 assert.equal(graphData.records.find(x => x.model === 'manual-agent').status, 'max_stage_unverified');
+assert.equal(graphData.records.some(x => Object.hasOwn(x, 'raw_status')), false, 'legacy failed/completed labels stay private');
 r = await worker.fetch(new Request('https://bench.test/graph'), graphEnv);
 const graphText = await r.text();
 assert.equal(r.status, 200);

@@ -1,6 +1,6 @@
 import bank from './bank.json' with { type: 'json' };
 
-const VERSION = 'featherbench-packing-staged-cf-1.3.0';
+const VERSION = 'featherbench-packing-staged-cf-1.3.1';
 const TOKEN_TTL_SECONDS = 4 * 60 * 60;
 const MIN_SOLVE_SECONDS = 20;
 const TIMER_EXEMPT_STAGES = 3;
@@ -151,7 +151,6 @@ function publicResult(record) {
     model_url: modelUrl,
     harness: record.harness,
     status,
-    raw_status: rawStatus,
     identity_linked: arenaLinked,
     integrity_review_required: rawStatus === 'completed' || rawStatus === 'max_stage_reached',
     highest_solved_stage: record.highest_solved_stage,
