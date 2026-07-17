@@ -39,6 +39,8 @@ assert.match(externalNoCodeBody.error, /BENCH_SECRET/);
 const refs = bank.stages.map(s => s.key.reference_map.join('\n'));
 for (let i = 0; i < bank.stages.length; i++) {
   assert.match(bank.stages[i].prompt, /one optional plain-text file named notes\.txt/i, `notes exception stage ${i + 1}`);
+  assert.match(bank.stages[i].prompt, /try your hardest.*strongest answer/i, `effort instruction stage ${i + 1}`);
+  assert.match(bank.stages[i].prompt, /earlier solved stage remains scored/i, `partial progress instruction stage ${i + 1}`);
   assert.equal(verifyPacking(bank.stages[i], refs[i]), true, `reference stage ${i + 1}`);
   assert.equal(verifyPacking(bank.stages[i], { rows: bank.stages[i].key.reference_map }), true, `row form stage ${i + 1}`);
   assert.equal(verifyPacking(bank.stages[i], refs[i].replace(/[A-Z]/, '.')), false, `missing cell stage ${i + 1}`);
@@ -87,7 +89,8 @@ r = await badGate.fetch(new Request('https://gate/submit', { method: 'POST', bod
 body = await r.json();
 assert.equal(body.correct, false);
 assert.equal(body.stop, true);
-assert.equal(body.report.status, 'failed');
+assert.equal(body.report.status, 'stopped');
+assert.equal(body.score_retained, true);
 assert.equal(body.report.completed_stages, 1, 'previous accepted stage remains scored');
 assert.equal(body.report.conversation_code, CODE);
 assert.equal(body.report.model, CODE, 'conversation code is used as the graph model label');
@@ -108,13 +111,29 @@ assert.equal(body.report.harness, 'custom');
 // The shared SQLite-backed Durable Object index powers /graph.
 const leaderboardStorage = new Storage();
 const leaderboardGate = new RunGate({ storage: leaderboardStorage }, {});
-r = await leaderboardGate.fetch(new Request('https://leaderboard/record', { method: 'POST', body: JSON.stringify({ action: 'record_result', record: { run_id: 'run-1', conversation_code: CODE, model: CODE, harness: 'manual', status: 'failed', highest_solved_stage: 3, total_time_seconds: 91.5, weighted_correctness_score: 16.667, speed_score: 50, performance_score: 20, updated_at: '2026-07-16T12:00:00Z' } }) }));
-assert.equal(r.status, 200);
+for (const record of [
+  { run_id: 'run-low', conversation_code: CODE, model: CODE, harness: 'arena.ai', status: 'stopped', highest_solved_stage: 3, total_time_seconds: 91.5, weighted_correctness_score: 16.667, speed_score: 50, performance_score: 20, updated_at: '2026-07-16T12:00:00Z' },
+  { run_id: 'run-best', conversation_code: CODE, model: CODE, harness: 'arena.ai', status: 'max_stage_reached', highest_solved_stage: 8, total_time_seconds: 500, weighted_correctness_score: 100, speed_score: 40, performance_score: 94, updated_at: '2026-07-16T13:00:00Z' },
+  { run_id: 'run-manual', conversation_code: null, model: 'manual-agent', harness: 'manual', status: 'max_stage_reached', highest_solved_stage: 8, total_time_seconds: 400, weighted_correctness_score: 100, speed_score: 45, performance_score: 94.5, updated_at: '2026-07-16T14:00:00Z' },
+]) {
+  r = await leaderboardGate.fetch(new Request('https://leaderboard/record', { method: 'POST', body: JSON.stringify({ action: 'record_result', record }) }));
+  assert.equal(r.status, 200);
+}
 const graphEnv = { RUN_GATE: { idFromName: name => name, get: () => ({ fetch: (url, init) => leaderboardGate.fetch(new Request(url, init)) }) } };
+r = await worker.fetch(new Request('https://bench.test/graph.json'), graphEnv);
+let graphData = await r.json();
+assert.equal(graphData.records.length, 2, 'same conversation code is consolidated to one best result');
+assert.equal(graphData.records.find(x => x.model === CODE).highest_solved_stage, 8);
+assert.equal(graphData.records.find(x => x.model === CODE).status, 'max_stage_pending_review');
+assert.equal(graphData.records.find(x => x.model === CODE).model_url, `https://arena.ai/agent/${CODE}`);
+assert.equal(graphData.records.find(x => x.model === 'manual-agent').status, 'max_stage_unverified');
 r = await worker.fetch(new Request('https://bench.test/graph'), graphEnv);
 const graphText = await r.text();
 assert.equal(r.status, 200);
 assert.match(graphText, new RegExp(CODE));
+assert.match(graphText, /max_stage_pending_review/);
+assert.match(graphText, /max_stage_unverified/);
+assert.match(graphText, new RegExp(`https://arena\\.ai/agent/${CODE}`));
 assert.match(graphText, /Highest solved puzzle/);
 
 console.log(`ok: ${bank.stages.length} staged packing tasks, persistence, and graph invariants`);

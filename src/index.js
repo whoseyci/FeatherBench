@@ -1,6 +1,6 @@
 import bank from './bank.json' with { type: 'json' };
 
-const VERSION = 'featherbench-packing-staged-cf-1.2.3';
+const VERSION = 'featherbench-packing-staged-cf-1.3.0';
 const TOKEN_TTL_SECONDS = 4 * 60 * 60;
 const MIN_SOLVE_SECONDS = 20;
 const TIMER_EXEMPT_STAGES = 3;
@@ -120,7 +120,8 @@ function report(state) {
     model: String(state.conversation_code || state.metadata?.model || 'unknown').slice(0, 100),
     harness: String(state.metadata?.harness || 'unknown').slice(0, 100),
     status: state.status,
-    certified: state.status === 'completed' || state.status === 'failed',
+    score_finalized: ['stopped', 'max_stage_reached', 'flagged_tool_use'].includes(state.status),
+    integrity_review_required: state.status === 'max_stage_reached',
     tool_use_flagged: state.status === 'flagged_tool_use',
     completed_stages: accepted.length,
     highest_solved_stage: highest,
@@ -138,11 +139,21 @@ function htmlEscape(value) {
   return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function publicResult(record) {
+  const rawStatus = record.status;
+  const arenaLinked = validConversationCode(record.conversation_code) && ['arena', 'arena.ai'].includes(String(record.harness || '').trim().toLowerCase());
+  let status = rawStatus;
+  if (rawStatus === 'failed') status = 'stopped'; // normalize historical records
+  if (rawStatus === 'completed' || rawStatus === 'max_stage_reached') status = arenaLinked ? 'max_stage_pending_review' : 'max_stage_unverified';
+  const modelUrl = validConversationCode(record.model) ? `https://arena.ai/agent/${record.model}` : null;
   return {
     run_id: record.run_id,
     model: record.model,
+    model_url: modelUrl,
     harness: record.harness,
-    status: record.status,
+    status,
+    raw_status: rawStatus,
+    identity_linked: arenaLinked,
+    integrity_review_required: rawStatus === 'completed' || rawStatus === 'max_stage_reached',
     highest_solved_stage: record.highest_solved_stage,
     total_time_seconds: record.total_time_seconds,
     weighted_correctness_score: record.weighted_correctness_score,
@@ -151,23 +162,32 @@ function publicResult(record) {
     updated_at: record.updated_at,
   };
 }
+function betterResult(candidate, incumbent) {
+  if (!incumbent) return candidate;
+  const a = Number(candidate.highest_solved_stage) || 0, b = Number(incumbent.highest_solved_stage) || 0;
+  if (a !== b) return a > b ? candidate : incumbent;
+  const ap = Number(candidate.performance_score) || 0, bp = Number(incumbent.performance_score) || 0;
+  if (ap !== bp) return ap > bp ? candidate : incumbent;
+  return String(candidate.updated_at) > String(incumbent.updated_at) ? candidate : incumbent;
+}
 function graphHtml(records) {
   records = records.map(publicResult);
   const W = 1040, H = 620, left = 90, right = 990, top = 45, bottom = 535;
   const maxTime = Math.max(60, ...records.map(r => Number(r.total_time_seconds) || 0));
   const x = t => left + (Math.max(0, Number(t) || 0) / maxTime) * (right - left);
   const y = s => bottom - (Math.max(0, Math.min(bank.stages.length, Number(s) || 0)) / bank.stages.length) * (bottom - top);
-  const colors = { completed: '#20c997', active: '#5b8def', failed: '#ff6b6b', flagged_tool_use: '#f59f00' };
+  const colors = { max_stage_pending_review: '#ffd43b', max_stage_unverified: '#f59f00', active: '#5b8def', stopped: '#adb5bd', flagged_tool_use: '#e8590c' };
   let grid = '';
   for (let s = 0; s <= bank.stages.length; s++) grid += `<line x1="${left}" y1="${y(s)}" x2="${right}" y2="${y(s)}" stroke="#253047"/><text x="${left - 16}" y="${y(s) + 5}" text-anchor="end">${s}</text>`;
   for (let i = 0; i <= 5; i++) { const t = maxTime * i / 5; grid += `<line x1="${x(t)}" y1="${top}" x2="${x(t)}" y2="${bottom}" stroke="#253047"/><text x="${x(t)}" y="${bottom + 28}" text-anchor="middle">${Math.round(t)}s</text>`; }
   const points = records.map((r, i) => {
     const label = htmlEscape(r.model || 'unknown');
     const color = colors[r.status] || '#adb5bd';
-    return `<g><circle cx="${x(r.total_time_seconds)}" cy="${y(r.highest_solved_stage)}" r="8" fill="${color}" stroke="#f8f9fa" stroke-width="2"><title>${label} — stage ${r.highest_solved_stage}, ${r.total_time_seconds}s, ${htmlEscape(r.status)}</title></circle><text x="${x(r.total_time_seconds) + 11}" y="${y(r.highest_solved_stage) - 10 + (i % 3) * 10}" class="point-label">${label}</text></g>`;
+    const point = `<circle cx="${x(r.total_time_seconds)}" cy="${y(r.highest_solved_stage)}" r="8" fill="${color}" stroke="#f8f9fa" stroke-width="2"><title>${label} — stage ${r.highest_solved_stage}, ${r.total_time_seconds}s, ${htmlEscape(r.status)}</title></circle><text x="${x(r.total_time_seconds) + 11}" y="${y(r.highest_solved_stage) - 10 + (i % 3) * 10}" class="point-label">${label}</text>`;
+    return r.model_url ? `<a href="${htmlEscape(r.model_url)}" target="_blank" rel="noopener noreferrer"><g>${point}</g></a>` : `<g>${point}</g>`;
   }).join('');
-  const rows = [...records].sort((a, b) => (b.highest_solved_stage - a.highest_solved_stage) || (a.total_time_seconds - b.total_time_seconds)).map(r => `<tr><td>${htmlEscape(r.model)}</td><td>${htmlEscape(r.harness)}</td><td>${r.highest_solved_stage}</td><td>${r.total_time_seconds}</td><td>${r.performance_score}</td><td><span class="status ${htmlEscape(r.status)}">${htmlEscape(r.status)}</span></td></tr>`).join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FeatherBench model graph</title><style>body{margin:0;background:#0b1020;color:#e9ecef;font:15px system-ui,sans-serif}.wrap{max-width:1120px;margin:auto;padding:32px 20px}h1{margin:0 0 8px;font-size:30px}p{color:#adb5bd}.card{background:#131a2c;border:1px solid #2b3753;border-radius:16px;padding:16px;margin-top:22px;overflow:auto}svg{width:100%;min-width:760px;height:auto}svg text{fill:#adb5bd;font-size:13px}.point-label{fill:#f1f3f5;font-size:12px;font-weight:600}.axis-label{fill:#f8f9fa;font-size:15px;font-weight:700}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px;border-bottom:1px solid #2b3753}th{color:#8fa8d8}.status{padding:3px 8px;border-radius:999px;background:#343a40}.completed{background:#087f5b}.failed{background:#c92a2a}.flagged_tool_use{background:#e67700}.empty{padding:70px;text-align:center;color:#adb5bd}</style></head><body><main class="wrap"><h1>FeatherBench model progress</h1><p>Each point is one run. Lower total time is farther left; higher solved stage is farther up. Updated automatically after submissions.</p><section class="card">${records.length ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Model performance scatter plot">${grid}<line x1="${left}" y1="${bottom}" x2="${right}" y2="${bottom}" stroke="#e9ecef"/><line x1="${left}" y1="${top}" x2="${left}" y2="${bottom}" stroke="#e9ecef"/>${points}<text x="${(left + right) / 2}" y="590" text-anchor="middle" class="axis-label">Total time</text><text x="24" y="${(top + bottom) / 2}" text-anchor="middle" transform="rotate(-90 24 ${(top + bottom) / 2})" class="axis-label">Highest solved puzzle</text></svg>` : '<div class="empty">No submitted runs yet.</div>'}</section><section class="card"><table><thead><tr><th>Model</th><th>Harness</th><th>Highest stage</th><th>Total time (s)</th><th>Performance</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></section></main></body></html>`;
+  const rows = [...records].sort((a, b) => (b.highest_solved_stage - a.highest_solved_stage) || (a.total_time_seconds - b.total_time_seconds)).map(r => { const label = htmlEscape(r.model); const shown = r.model_url ? `<a href="${htmlEscape(r.model_url)}" target="_blank" rel="noopener noreferrer">${label}</a>` : label; return `<tr><td>${shown}</td><td>${htmlEscape(r.harness)}</td><td>${r.highest_solved_stage}</td><td>${r.total_time_seconds}</td><td>${r.performance_score}</td><td><span class="status ${htmlEscape(r.status)}">${htmlEscape(r.status)}</span></td></tr>`; }).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FeatherBench model graph</title><style>body{margin:0;background:#0b1020;color:#e9ecef;font:15px system-ui,sans-serif}.wrap{max-width:1120px;margin:auto;padding:32px 20px}h1{margin:0 0 8px;font-size:30px}p{color:#adb5bd}.card{background:#131a2c;border:1px solid #2b3753;border-radius:16px;padding:16px;margin-top:22px;overflow:auto}svg{width:100%;min-width:760px;height:auto}svg text{fill:#adb5bd;font-size:13px}.point-label{fill:#f1f3f5;font-size:12px;font-weight:600}.axis-label{fill:#f8f9fa;font-size:15px;font-weight:700}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px;border-bottom:1px solid #2b3753}th{color:#8fa8d8}a{color:#91b7ff}.status{padding:3px 8px;border-radius:999px;background:#343a40}.max_stage_pending_review{background:#a07900}.max_stage_unverified{background:#d9480f}.stopped{background:#495057}.flagged_tool_use{background:#e67700}.empty{padding:70px;text-align:center;color:#adb5bd}</style></head><body><main class="wrap"><h1>FeatherBench model progress</h1><p>Each point is the best retained run for one conversation code (or one uncoded run). Lower total time is farther left; higher solved stage is farther up. Reaching the maximum stage is shown as pending review or unverified; lower stopping points are retained normally and are not failures.</p><section class="card">${records.length ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Model performance scatter plot">${grid}<line x1="${left}" y1="${bottom}" x2="${right}" y2="${bottom}" stroke="#e9ecef"/><line x1="${left}" y1="${top}" x2="${left}" y2="${bottom}" stroke="#e9ecef"/>${points}<text x="${(left + right) / 2}" y="590" text-anchor="middle" class="axis-label">Total time</text><text x="24" y="${(top + bottom) / 2}" text-anchor="middle" transform="rotate(-90 24 ${(top + bottom) / 2})" class="axis-label">Highest solved puzzle</text></svg>` : '<div class="empty">No submitted runs yet.</div>'}</section><section class="card"><table><thead><tr><th>Model</th><th>Harness</th><th>Highest stage</th><th>Total time (s)</th><th>Performance</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></section></main></body></html>`;
 }
 
 function agentMd(origin) {
@@ -177,7 +197,7 @@ This track measures unaided visual-spatial deduction. **Solving tools are strict
 
 The sole workspace exception is one optional plain-text file named exactly \`notes.txt\`. You may write and reread your own reasoning notes there. Do not create or use any other workspace file, and do not execute, programmatically generate, or parse \`notes.txt\` with code.
 
-The API releases exactly one task at a time, beginning with one required tile and one decoy. **Push as far through the stages as you can.** A completely correct answer advances to a harder stage. Every stage has one attempt and only exact valid tilings count. An incorrect answer permanently ends the run, preventing score-oracle probing, but every previously accepted stage remains scored.
+The API releases exactly one task at a time, beginning with one required tile and one decoy. **Push as far through the stages as you can. Try your hardest, take as much reasoning time as you need, and submit your strongest answer.** A completely correct answer advances to a harder stage. Every stage has one attempt and only exact valid tilings count. An unaccepted answer stops the run, preventing score-oracle probing, but every previously accepted stage remains scored. There is no failed-run label: stopping at any later puzzle is a valid partial result.
 
 ## Conversation code for Arena.ai runs
 
@@ -203,7 +223,7 @@ Return the ASCII map in \`answer\` (JSON newlines must be escaped):
 {"run_token":"...","attest_no_solving_tools":true,"answer":"..AA..\\n.BBA.."}
 \`\`\`
 
-Submit it once to \`POST /v1/submit\`. A successful non-final response contains the next stage. Do not submit after any stop/flag/failure response.
+Submit it once to \`POST /v1/submit\`. A successful non-final response contains the next stage. Do not submit after any response with \`stop:true\`.
 
 Scores: stage N is worth N points and correctness is all-or-nothing. The final report includes correctness, speed, and combined performance scores. When a conversation code is present it becomes the model label on ${origin}/graph; otherwise the graph uses \`metadata.model\`. The harness comes from optional \`metadata.harness\` and is \`unknown\` when omitted.
 `;
@@ -221,7 +241,12 @@ export class RunGate {
     }
     if (body.action === 'list_results') {
       const found = await this.ctx.storage.list({ prefix: 'result:', limit: 1000 });
-      return json({ ok: true, records: [...found.values()].sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))) });
+      const best = new Map();
+      for (const record of found.values()) {
+        const code = validConversationCode(record.conversation_code) ? record.conversation_code : `run:${record.run_id}`;
+        best.set(code, betterResult(record, best.get(code)));
+      }
+      return json({ ok: true, records: [...best.values()].sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))) });
     }
     if (body.action === 'register') {
       const existing = await this.ctx.storage.get('state');
@@ -245,12 +270,12 @@ export class RunGate {
       const record = { stage: stage.stage, elapsed_seconds: round(elapsed), correct, accepted: false, disposition: '' };
 
       if (!correct) {
-        record.disposition = 'incorrect_run_terminated';
+        record.disposition = 'answer_not_accepted_score_retained';
         state.records.push(record);
-        state.status = 'failed';
+        state.status = 'stopped';
         state.scores = report(state);
         await tx.put('state', state);
-        response = { ok: false, correct: false, stop: true, message: 'STOP. The answer was not completely correct; this one-attempt run is permanently closed. Every previously accepted stage remains scored.', report: state.scores };
+        response = { ok: true, correct: false, stop: true, score_retained: true, message: 'This answer was not accepted, so the run stops here. Your highest solved stage and all previously earned score are retained; this is a valid partial result, not a failure.', report: state.scores };
         return;
       }
       if (stage.stage > TIMER_EXEMPT_STAGES && elapsed < MIN_SOLVE_SECONDS) {
@@ -276,16 +301,16 @@ export class RunGate {
       record.disposition = 'accepted';
       state.records.push(record);
       if (state.current_stage === bank.stages.length) {
-        state.status = 'completed';
+        state.status = 'max_stage_reached';
         state.scores = report(state);
         await tx.put('state', state);
-        response = { ok: true, correct: true, completed: true, stop: true, message: 'All stages completed.', report: state.scores };
+        response = { ok: true, correct: true, max_stage_reached: true, stop: true, soft_integrity_alert: true, message: 'Maximum stage reached. The score is retained and marked pending integrity review.', report: state.scores };
       } else {
         state.current_stage += 1;
         state.stage_started_at = Date.now();
         state.scores = report(state);
         await tx.put('state', state);
-        response = { ok: true, correct: true, completed: false, report: state.scores, task: publicStage(bank.stages[state.current_stage - 1]) };
+        response = { ok: true, correct: true, max_stage_reached: false, report: state.scores, task: publicStage(bank.stages[state.current_stage - 1]) };
       }
     });
     return json(response, responseStatus);
