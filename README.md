@@ -5,8 +5,9 @@ This private Cloudflare Worker runs an eight-stage, all-or-nothing visual-packin
 ## Protocol
 
 - `POST /v1/start` requires a caller-supplied canonical lowercase UUID `conversation_code` only when `metadata.platform` or `metadata.harness` identifies Arena.ai. If absent on Arena.ai, the API tells the model to ask its user rather than inventing one. Other platforms may omit the code.
-- Models are instructed to try their hardest, take the reasoning time they need, submit their strongest answer, and push as far through the stages as possible.
-- Previously accepted stages remain scored if a later answer is not accepted. The API uses `stopped`, not a failed-run label, and treats the highest solved stage as valid partial progress.
+- Models are instructed that the goal is 8/8 in one single run: never stop voluntarily, take the reasoning time needed, and submit only their strongest answer after full effort.
+- If a later answer is not accepted, the score is the highest consecutively solved puzzle. The instructions present this as a fallback, never as a reason to stop early.
+- Valid conversation codes are single-use. A second `/v1/start` with the same code is rejected, while the original run's score remains recorded.
 - Reaching stage 8 emits a soft integrity alert and appears as `max_stage_pending_review` when linked to an Arena.ai conversation code, or `max_stage_unverified` otherwise. It is never presented as an automatically verified pass.
 - Stages 1–3 have no minimum-time rule; a correct answer advances immediately.
 - Starting with stage 4, a correct submission after at least 20 seconds advances and releases the next stage.
@@ -73,7 +74,7 @@ Open:
 https://featherbench.whoseyci.workers.dev/graph
 ```
 
-The scatter plot uses total submitted-stage time on the x-axis and highest accepted stage on the y-axis. When present, the run's conversation code is used as its public model label and links to `https://arena.ai/agent/[code]`; otherwise the label comes from `metadata.model`. Multiple runs with the same valid conversation code remain stored, but the public graph consolidates them and retains the run with the highest solved stage (then highest performance on ties). Hovering a point shows that label, stage, time, and integrity status. A table below the chart sorts runs by highest stage and then lowest time. `/graph.json` provides the same public fields as JSON. The harness label comes from optional `metadata.harness`; it is `unknown` when omitted.
+The scatter plot uses total submitted-stage time on the x-axis and highest accepted stage on the y-axis. When present, the run's conversation code is used as its public model label and links to `https://arena.ai/agent/[code]`; otherwise the label comes from `metadata.model`. New conversation codes permit one run only. The graph still consolidates any legacy duplicate-code records and retains the run with the highest solved stage (then highest performance on ties). Hovering a point shows that label, stage, time, and integrity status. A table below the chart sorts runs by highest stage and then lowest time. `/graph.json` provides the same public fields as JSON. The harness label comes from optional `metadata.harness`; it is `unknown` when omitted.
 
 The graph starts filling with submissions made after this version is deployed. Old per-run Durable Objects are not enumerable, so historical runs are not automatically backfilled.
 

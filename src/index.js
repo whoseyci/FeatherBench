@@ -1,6 +1,6 @@
 import bank from './bank.json' with { type: 'json' };
 
-const VERSION = 'featherbench-packing-staged-cf-1.3.1';
+const VERSION = 'featherbench-packing-staged-cf-1.4.0';
 const TOKEN_TTL_SECONDS = 4 * 60 * 60;
 const MIN_SOLVE_SECONDS = 20;
 const TIMER_EXEMPT_STAGES = 3;
@@ -186,7 +186,7 @@ function graphHtml(records) {
     return r.model_url ? `<a href="${htmlEscape(r.model_url)}" target="_blank" rel="noopener noreferrer"><g>${point}</g></a>` : `<g>${point}</g>`;
   }).join('');
   const rows = [...records].sort((a, b) => (b.highest_solved_stage - a.highest_solved_stage) || (a.total_time_seconds - b.total_time_seconds)).map(r => { const label = htmlEscape(r.model); const shown = r.model_url ? `<a href="${htmlEscape(r.model_url)}" target="_blank" rel="noopener noreferrer">${label}</a>` : label; return `<tr><td>${shown}</td><td>${htmlEscape(r.harness)}</td><td>${r.highest_solved_stage}</td><td>${r.total_time_seconds}</td><td>${r.performance_score}</td><td><span class="status ${htmlEscape(r.status)}">${htmlEscape(r.status)}</span></td></tr>`; }).join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FeatherBench model graph</title><style>body{margin:0;background:#0b1020;color:#e9ecef;font:15px system-ui,sans-serif}.wrap{max-width:1120px;margin:auto;padding:32px 20px}h1{margin:0 0 8px;font-size:30px}p{color:#adb5bd}.card{background:#131a2c;border:1px solid #2b3753;border-radius:16px;padding:16px;margin-top:22px;overflow:auto}svg{width:100%;min-width:760px;height:auto}svg text{fill:#adb5bd;font-size:13px}.point-label{fill:#f1f3f5;font-size:12px;font-weight:600}.axis-label{fill:#f8f9fa;font-size:15px;font-weight:700}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px;border-bottom:1px solid #2b3753}th{color:#8fa8d8}a{color:#91b7ff}.status{padding:3px 8px;border-radius:999px;background:#343a40}.max_stage_pending_review{background:#a07900}.max_stage_unverified{background:#d9480f}.stopped{background:#495057}.flagged_tool_use{background:#e67700}.empty{padding:70px;text-align:center;color:#adb5bd}</style></head><body><main class="wrap"><h1>FeatherBench model progress</h1><p>Each point is the best retained run for one conversation code (or one uncoded run). Lower total time is farther left; higher solved stage is farther up. Reaching the maximum stage is shown as pending review or unverified; lower stopping points are retained normally and are not failures.</p><section class="card">${records.length ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Model performance scatter plot">${grid}<line x1="${left}" y1="${bottom}" x2="${right}" y2="${bottom}" stroke="#e9ecef"/><line x1="${left}" y1="${top}" x2="${left}" y2="${bottom}" stroke="#e9ecef"/>${points}<text x="${(left + right) / 2}" y="590" text-anchor="middle" class="axis-label">Total time</text><text x="24" y="${(top + bottom) / 2}" text-anchor="middle" transform="rotate(-90 24 ${(top + bottom) / 2})" class="axis-label">Highest solved puzzle</text></svg>` : '<div class="empty">No submitted runs yet.</div>'}</section><section class="card"><table><thead><tr><th>Model</th><th>Harness</th><th>Highest stage</th><th>Total time (s)</th><th>Performance</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></section></main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FeatherBench model graph</title><style>body{margin:0;background:#0b1020;color:#e9ecef;font:15px system-ui,sans-serif}.wrap{max-width:1120px;margin:auto;padding:32px 20px}h1{margin:0 0 8px;font-size:30px}p{color:#adb5bd}.card{background:#131a2c;border:1px solid #2b3753;border-radius:16px;padding:16px;margin-top:22px;overflow:auto}svg{width:100%;min-width:760px;height:auto}svg text{fill:#adb5bd;font-size:13px}.point-label{fill:#f1f3f5;font-size:12px;font-weight:600}.axis-label{fill:#f8f9fa;font-size:15px;font-weight:700}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px;border-bottom:1px solid #2b3753}th{color:#8fa8d8}a{color:#91b7ff}.status{padding:3px 8px;border-radius:999px;background:#343a40}.max_stage_pending_review{background:#a07900}.max_stage_unverified{background:#d9480f}.stopped{background:#495057}.flagged_tool_use{background:#e67700}.empty{padding:70px;text-align:center;color:#adb5bd}</style></head><body><main class="wrap"><h1>FeatherBench model progress</h1><p>Each point is the best retained run for one conversation code (or one uncoded run). Lower total time is farther left; higher solved stage is farther up. The y-axis is the highest consecutively solved puzzle in that single run. Reaching 8/8 is shown as pending review or unverified.</p><section class="card">${records.length ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Model performance scatter plot">${grid}<line x1="${left}" y1="${bottom}" x2="${right}" y2="${bottom}" stroke="#e9ecef"/><line x1="${left}" y1="${top}" x2="${left}" y2="${bottom}" stroke="#e9ecef"/>${points}<text x="${(left + right) / 2}" y="590" text-anchor="middle" class="axis-label">Total time</text><text x="24" y="${(top + bottom) / 2}" text-anchor="middle" transform="rotate(-90 24 ${(top + bottom) / 2})" class="axis-label">Highest solved puzzle</text></svg>` : '<div class="empty">No submitted runs yet.</div>'}</section><section class="card"><table><thead><tr><th>Model</th><th>Harness</th><th>Highest stage</th><th>Total time (s)</th><th>Performance</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></section></main></body></html>`;
 }
 
 function agentMd(origin) {
@@ -196,11 +196,11 @@ This track measures unaided visual-spatial deduction. **Solving tools are strict
 
 The sole workspace exception is one optional plain-text file named exactly \`notes.txt\`. You may write and reread your own reasoning notes there. Do not create or use any other workspace file, and do not execute, programmatically generate, or parse \`notes.txt\` with code.
 
-The API releases exactly one task at a time, beginning with one required tile and one decoy. **Push as far through the stages as you can. Try your hardest, take as much reasoning time as you need, and submit your strongest answer.** A completely correct answer advances to a harder stage. Every stage has one attempt and only exact valid tilings count. An unaccepted answer stops the run, preventing score-oracle probing, but every previously accepted stage remains scored. There is no failed-run label: stopping at any later puzzle is a valid partial result.
+The goal is **8/8 in one single run**. Do not stop voluntarily. For every released puzzle, try your hardest, take as much reasoning time as you need, and submit only your strongest answer after full effort. A completely correct answer advances to the next stage. Every stage has one attempt and only exact valid tilings count. If an answer is not accepted, the run ends and the score is the highest consecutively solved puzzle. Score retention is a fallback—not an invitation to stop before attempting the next puzzle.
 
 ## Conversation code for Arena.ai runs
 
-If you are currently running inside **Arena.ai**, set \`metadata.platform\` to \`arena.ai\` and provide the user's conversation code in canonical lowercase UUID form, for example \`019f6bde-edae-7305-a9b2-6dec6ff62989\`. If the Arena.ai user has not provided a code, **stop before starting, turn back to the user, and post a question asking for their conversation code.** Do not invent one. Outside Arena.ai, the conversation code is optional.
+If you are currently running inside **Arena.ai**, set \`metadata.platform\` to \`arena.ai\` and provide the user's conversation code in canonical lowercase UUID form, for example \`019f6bde-edae-7305-a9b2-6dec6ff62989\`. If the Arena.ai user has not provided a code, **stop before starting, turn back to the user, and post a question asking for their conversation code.** Do not invent one. A conversation code is single-use: it permits one benchmark run only. Outside Arena.ai, the conversation code is optional.
 
 ## Start
 
@@ -232,6 +232,16 @@ export class RunGate {
   constructor(ctx, env) { this.ctx = ctx; this.env = env; }
   async fetch(req) {
     const body = await req.json();
+    if (body.action === 'claim_code') {
+      if (!validConversationCode(body.conversation_code) || typeof body.run_id !== 'string') return json({ ok: false, error: 'bad conversation-code claim' }, 400);
+      const claimKey = `claim:${body.conversation_code}`;
+      const existingClaim = await this.ctx.storage.get(claimKey);
+      const priorResults = await this.ctx.storage.list({ prefix: 'result:', limit: 1000 });
+      const priorRun = [...priorResults.values()].find(r => r.conversation_code === body.conversation_code);
+      if (existingClaim || priorRun) return json({ ok: false, error: 'conversation_code already used; the benchmark allows one single run per code' }, 409);
+      await this.ctx.storage.put(claimKey, { run_id: body.run_id, claimed_at: new Date().toISOString() });
+      return json({ ok: true });
+    }
     if (body.action === 'record_result') {
       const r = body.record;
       if (!r || typeof r.run_id !== 'string' || r.run_id.length > 100) return json({ ok: false, error: 'bad result record' }, 400);
@@ -274,7 +284,7 @@ export class RunGate {
         state.status = 'stopped';
         state.scores = report(state);
         await tx.put('state', state);
-        response = { ok: true, correct: false, stop: true, score_retained: true, message: 'This answer was not accepted, so the run stops here. Your highest solved stage and all previously earned score are retained; this is a valid partial result, not a failure.', report: state.scores };
+        response = { ok: true, correct: false, stop: true, score_retained: true, message: 'This answer was not accepted, so this single run is finalized. The recorded score is your highest consecutively solved puzzle.', report: state.scores };
         return;
       }
       if (stage.stage > TIMER_EXEMPT_STAGES && elapsed < MIN_SOLVE_SECONDS) {
@@ -341,6 +351,12 @@ export default {
         const now = Math.floor(Date.now() / 1000);
         const conversationCode = body.conversation_code || null;
         const payload = { run_id: crypto.randomUUID(), conversation_code: conversationCode, iat: now, exp: now + TOKEN_TTL_SECONDS, nonce: String(body.client_nonce || '').slice(0, 200) };
+        if (conversationCode) {
+          const leaderboard = env.RUN_GATE.get(env.RUN_GATE.idFromName('__featherbench_leaderboard__'));
+          const claimResponse = await leaderboard.fetch('https://leaderboard/claim', { method: 'POST', body: JSON.stringify({ action: 'claim_code', conversation_code: conversationCode, run_id: payload.run_id }) });
+          const claim = await claimResponse.json();
+          if (!claim.ok) return json({ ok: false, code_already_used: true, error: claim.error, message: 'This conversation code already has its one benchmark run. Its highest solved puzzle remains recorded.' }, 409);
+        }
         const runToken = await tokenFor(env, payload);
         const gate = env.RUN_GATE.get(env.RUN_GATE.idFromName(payload.run_id));
         const registration = await gate.fetch('https://gate/register', { method: 'POST', body: JSON.stringify({ action: 'register', conversation_code: conversationCode, metadata: body.metadata || {} }) });

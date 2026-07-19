@@ -150,7 +150,7 @@ def prompt_for(target_rows, shown, has_decoys):
         "Solve this purely by visual deduction and reasoning. Solving tools are strictly prohibited: do not use scripts, code, image extraction, search, SAT/exact-cover solvers, or external assistance. Transport-only API calls are allowed.",
         "The only workspace exception is one optional plain-text file named notes.txt, used solely to write and reread your own reasoning notes. Do not create or use any other workspace file, and do not execute or parse notes.txt with code.",
         "Tiles may be rotated and flipped. " + pool_rule,
-        "Try your hardest and take as much reasoning time as you need before submitting your strongest answer. If this stage is not accepted, the run stops, but every earlier solved stage remains scored. There is no failed-run label; the highest solved stage is retained as valid partial progress.",
+        "Your goal is 8/8 in this one run. Do not stop voluntarily. Try your hardest, take as much reasoning time as needed, and submit only your strongest answer after full effort. If this answer is not accepted, the run ends and your score is the highest consecutively solved puzzle; score retention is a fallback, not a reason to stop early.",
         "Return only an ASCII map with exactly the TARGET dimensions. Use actual newline characters between rows; `/` is not a row separator. Keep `.` outside the target and fill every `#` target cell with the uppercase letter of the tile covering it. Use each selected tile exactly once; do not add commentary or fences.",
         "",
         "TARGET",
@@ -273,7 +273,7 @@ def main():
     stages.append(maximum_stage())
     public_digest = hashlib.sha256(json.dumps([{"stage": x["stage"], "prompt": x["prompt"]} for x in stages], sort_keys=True).encode()).hexdigest()
     bank = {
-        "manifest": {"version": "featherbench-packing-staged-1.3", "stages": len(stages), "public_commitment": public_digest},
+        "manifest": {"version": "featherbench-packing-staged-1.4", "stages": len(stages), "public_commitment": public_digest},
         "stages": stages,
     }
     out = ROOT / "src" / "bank.json"
