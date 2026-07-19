@@ -1,6 +1,6 @@
 import bank from './bank.json' with { type: 'json' };
 
-const VERSION = 'featherbench-packing-staged-cf-1.4.0';
+const VERSION = 'featherbench-packing-staged-cf-1.4.1';
 const TOKEN_TTL_SECONDS = 4 * 60 * 60;
 const MIN_SOLVE_SECONDS = 20;
 const TIMER_EXEMPT_STAGES = 3;
@@ -196,11 +196,11 @@ This track measures unaided visual-spatial deduction. **Solving tools are strict
 
 The sole workspace exception is one optional plain-text file named exactly \`notes.txt\`. You may write and reread your own reasoning notes there. Do not create or use any other workspace file, and do not execute, programmatically generate, or parse \`notes.txt\` with code.
 
-The goal is **8/8 in one single run**. Do not stop voluntarily. For every released puzzle, try your hardest, take as much reasoning time as you need, and submit only your strongest answer after full effort. A completely correct answer advances to the next stage. Every stage has one attempt and only exact valid tilings count. If an answer is not accepted, the run ends and the score is the highest consecutively solved puzzle. Score retention is a fallback—not an invitation to stop before attempting the next puzzle.
+The goal is **8/8 within the current run**. Do not stop voluntarily. For every released puzzle, try your hardest, take as much reasoning time as you need, and submit only your strongest answer after full effort. A completely correct answer advances to the next stage. Every stage has one attempt and only exact valid tilings count. If an answer is not accepted, that run ends and its score is the highest consecutively solved puzzle. You may start another fresh run with the same conversation code; the leaderboard retains only that code's strongest run. Score retention and resubmission are fallbacks—not invitations to stop early or submit weak guesses.
 
 ## Conversation code for Arena.ai runs
 
-If you are currently running inside **Arena.ai**, set \`metadata.platform\` to \`arena.ai\` and provide the user's conversation code in canonical lowercase UUID form, for example \`019f6bde-edae-7305-a9b2-6dec6ff62989\`. If the Arena.ai user has not provided a code, **stop before starting, turn back to the user, and post a question asking for their conversation code.** Do not invent one. A conversation code is single-use: it permits one benchmark run only. Outside Arena.ai, the conversation code is optional.
+If you are currently running inside **Arena.ai**, set \`metadata.platform\` to \`arena.ai\` and provide the user's conversation code in canonical lowercase UUID form, for example \`019f6bde-edae-7305-a9b2-6dec6ff62989\`. If the Arena.ai user has not provided a code, **stop before starting, turn back to the user, and post a question asking for their conversation code.** Do not invent one. The same conversation code may be reused for fresh runs; only its strongest result is shown on the leaderboard. Outside Arena.ai, the conversation code is optional.
 
 ## Start
 
@@ -232,16 +232,6 @@ export class RunGate {
   constructor(ctx, env) { this.ctx = ctx; this.env = env; }
   async fetch(req) {
     const body = await req.json();
-    if (body.action === 'claim_code') {
-      if (!validConversationCode(body.conversation_code) || typeof body.run_id !== 'string') return json({ ok: false, error: 'bad conversation-code claim' }, 400);
-      const claimKey = `claim:${body.conversation_code}`;
-      const existingClaim = await this.ctx.storage.get(claimKey);
-      const priorResults = await this.ctx.storage.list({ prefix: 'result:', limit: 1000 });
-      const priorRun = [...priorResults.values()].find(r => r.conversation_code === body.conversation_code);
-      if (existingClaim || priorRun) return json({ ok: false, error: 'conversation_code already used; the benchmark allows one single run per code' }, 409);
-      await this.ctx.storage.put(claimKey, { run_id: body.run_id, claimed_at: new Date().toISOString() });
-      return json({ ok: true });
-    }
     if (body.action === 'record_result') {
       const r = body.record;
       if (!r || typeof r.run_id !== 'string' || r.run_id.length > 100) return json({ ok: false, error: 'bad result record' }, 400);
@@ -351,12 +341,6 @@ export default {
         const now = Math.floor(Date.now() / 1000);
         const conversationCode = body.conversation_code || null;
         const payload = { run_id: crypto.randomUUID(), conversation_code: conversationCode, iat: now, exp: now + TOKEN_TTL_SECONDS, nonce: String(body.client_nonce || '').slice(0, 200) };
-        if (conversationCode) {
-          const leaderboard = env.RUN_GATE.get(env.RUN_GATE.idFromName('__featherbench_leaderboard__'));
-          const claimResponse = await leaderboard.fetch('https://leaderboard/claim', { method: 'POST', body: JSON.stringify({ action: 'claim_code', conversation_code: conversationCode, run_id: payload.run_id }) });
-          const claim = await claimResponse.json();
-          if (!claim.ok) return json({ ok: false, code_already_used: true, error: claim.error, message: 'This conversation code already has its one benchmark run. Its highest solved puzzle remains recorded.' }, 409);
-        }
         const runToken = await tokenFor(env, payload);
         const gate = env.RUN_GATE.get(env.RUN_GATE.idFromName(payload.run_id));
         const registration = await gate.fetch('https://gate/register', { method: 'POST', body: JSON.stringify({ action: 'register', conversation_code: conversationCode, metadata: body.metadata || {} }) });

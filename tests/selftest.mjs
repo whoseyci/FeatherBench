@@ -112,10 +112,6 @@ assert.equal(body.report.harness, 'custom');
 // The shared SQLite-backed Durable Object index powers /graph.
 const leaderboardStorage = new Storage();
 const leaderboardGate = new RunGate({ storage: leaderboardStorage }, {});
-r = await leaderboardGate.fetch(new Request('https://leaderboard/claim', { method: 'POST', body: JSON.stringify({ action: 'claim_code', conversation_code: CODE, run_id: 'first-run' }) }));
-assert.equal(r.status, 200);
-r = await leaderboardGate.fetch(new Request('https://leaderboard/claim', { method: 'POST', body: JSON.stringify({ action: 'claim_code', conversation_code: CODE, run_id: 'second-run' }) }));
-assert.equal(r.status, 409, 'conversation code permits one single run');
 for (const record of [
   { run_id: 'run-low', conversation_code: CODE, model: CODE, harness: 'arena.ai', status: 'stopped', highest_solved_stage: 3, total_time_seconds: 91.5, weighted_correctness_score: 16.667, speed_score: 50, performance_score: 20, updated_at: '2026-07-16T12:00:00Z' },
   { run_id: 'run-best', conversation_code: CODE, model: CODE, harness: 'arena.ai', status: 'max_stage_reached', highest_solved_stage: 8, total_time_seconds: 500, weighted_correctness_score: 100, speed_score: 40, performance_score: 94, updated_at: '2026-07-16T13:00:00Z' },
