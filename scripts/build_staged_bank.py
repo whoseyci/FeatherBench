@@ -268,11 +268,13 @@ def maximum_stage():
 
 
 def main():
-    specs = [(1, 1, 4), (2, 1, 5), (3, 1, 6), (4, 0, 6), (5, 0, 7), (6, 0, 8), (7, 0, 9)]
-    all_stages = [generated_stage(i, required, decoys, size) for i, (required, decoys, size) in enumerate(specs, 1)]
-    all_stages.append(maximum_stage())
     # Challenges 1-5 are retired and kept only in the maintainer's private archive.
-    stages = [stage for stage in all_stages if stage["stage"] in {6, 7, 8}]
+    # The active builder no longer generates them at all.
+    stages = [
+        generated_stage(6, required=6, decoys=0, size_each=8),
+        generated_stage(7, required=7, decoys=0, size_each=9),
+        maximum_stage(),
+    ]
     public_digest = hashlib.sha256(json.dumps([{"stage": x["stage"], "prompt": x["prompt"]} for x in stages], sort_keys=True).encode()).hexdigest()
     bank = {
         "manifest": {"version": "featherbench-packing-staged-1.5.0", "stages": len(stages), "active_challenges": [6, 7, 8], "public_commitment": public_digest},
